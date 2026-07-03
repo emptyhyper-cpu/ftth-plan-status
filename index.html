@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FTTH Plan Status — อัปเดตสถานะบ้านลงแบบหมู่บ้าน</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.0/tesseract.min.js"></script>
+<style>
+  :root{
+    --ink:#122B1D; --ink2:#4A6355; --bg:#EDF3EE; --panel:#FFFFFF;
+    --green:#007A3E; --green-d:#005C2E; --lime:#A4D233;
+    --line:#D8E4DA; --warn:#B54708; --danger:#C0271C;
+    --radius:10px;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:'Prompt','Sarabun','Noto Sans Thai',system-ui,sans-serif; background:var(--bg); color:var(--ink); font-size:14px;}
+  header{background:linear-gradient(90deg,var(--green-d),var(--green)); color:#fff; padding:10px 18px; display:flex; align-items:center; gap:12px; position:sticky; top:0; z-index:20;}
+  header .logo{background:var(--lime); color:var(--green-d); font-weight:700; border-radius:6px; padding:2px 8px; font-size:13px; letter-spacing:.5px;}
+  header h1{font-size:16px; font-weight:600;}
+  header .sub{font-size:12px; opacity:.85;}
+  .layout{display:grid; grid-template-columns:360px 1fr; gap:12px; padding:12px; align-items:start;}
+  @media(max-width:900px){ .layout{grid-template-columns:1fr;} }
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:12px; margin-bottom:12px;}
+  .panel h2{font-size:13px; font-weight:600; color:var(--green-d); display:flex; align-items:center; gap:8px; margin-bottom:10px;}
+  .step{background:var(--green); color:#fff; border-radius:50%; width:20px; height:20px; display:inline-flex; align-items:center; justify-content:center; font-size:11px; flex:none;}
+  .filebtn{display:block; border:1.5px dashed var(--green); border-radius:8px; padding:10px; text-align:center; color:var(--green-d); cursor:pointer; font-weight:500; background:#F4FAF5;}
+  .filebtn:hover{background:#E8F5EC;}
+  .filebtn input{display:none;}
+  .fileok{border-style:solid; background:#E8F5EC;}
+  .hint{font-size:12px; color:var(--ink2); margin-top:6px; line-height:1.5;}
+  select,input[type=number],input[type=text]{border:1px solid var(--line); border-radius:6px; padding:5px 8px; font-family:inherit; font-size:13px; width:100%; background:#fff;}
+  .row{display:flex; gap:8px; align-items:center; margin-top:8px;}
+  .row label{font-size:12px; color:var(--ink2); flex:none;}
+  /* status list */
+  .status-item{display:flex; align-items:center; gap:8px; padding:5px 0; border-bottom:1px dashed var(--line); font-size:13px;}
+  .status-item:last-child{border-bottom:none;}
+  .status-item input[type=color]{width:30px; height:24px; border:none; padding:0; background:none; cursor:pointer; flex:none;}
+  .status-item .nm{flex:1; line-height:1.3;}
+  .status-item .ct{font-weight:600; color:var(--green-d); flex:none;}
+  /* house list */
+  #houseList{max-height:320px; overflow:auto; border:1px solid var(--line); border-radius:8px;}
+  .house{display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid #EFF5F0; cursor:pointer; font-size:13px;}
+  .house:hover{background:#F4FAF5;}
+  .house.sel{background:#E1F2E6; outline:2px solid var(--green); outline-offset:-2px;}
+  .house .dot{width:12px; height:12px; border-radius:3px; border:1px solid rgba(0,0,0,.2); flex:none;}
+  .house .plot{font-weight:700; width:34px; flex:none;}
+  .house .addr{flex:1; color:var(--ink2);}
+  .house .pin{font-size:11px; flex:none;}
+  .pin.ok{color:var(--green);} .pin.no{color:var(--warn);}
+  .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; border:none; border-radius:8px; padding:9px 14px; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;}
+  .btn.primary{background:var(--green); color:#fff;}
+  .btn.primary:hover{background:var(--green-d);}
+  .btn.ghost{background:#fff; color:var(--green-d); border:1px solid var(--green);}
+  .btn.ghost:hover{background:#F4FAF5;}
+  .btn.small{padding:5px 10px; font-size:12px;}
+  .btn.danger{background:#fff; color:var(--danger); border:1px solid var(--danger);}
+  .btn:disabled{opacity:.4; cursor:not-allowed;}
+  .btnrow{display:flex; flex-wrap:wrap; gap:8px; margin-top:8px;}
+  /* canvas area */
+  .canvas-wrap{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); overflow:hidden;}
+  .toolbar{display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--line); background:#FAFCFA; font-size:12px; color:var(--ink2);}
+  .toolbar .grp{display:flex; align-items:center; gap:6px;}
+  .toolbar input[type=range]{width:90px;}
+  #stage{position:relative; overflow:auto; max-height:78vh; background:#CBD8CE; touch-action:none;}
+  #stage canvas{display:block;}
+  #overlay{position:absolute; left:0; top:0; cursor:crosshair;}
+  #emptyMsg{padding:60px 20px; text-align:center; color:var(--ink2); line-height:1.8;}
+  #emptyMsg b{color:var(--green-d);}
+  .banner{font-size:12px; padding:7px 12px; border-radius:8px; margin-top:8px; line-height:1.5;}
+  .banner.info{background:#EAF4FF; color:#175CD3;}
+  .banner.ok{background:#E6F6EC; color:var(--green-d);}
+  kbd{background:#EEE; border-radius:4px; padding:0 5px; font-family:inherit; border:1px solid #DDD;}
+  .chk{display:flex; gap:8px; align-items:flex-start; font-size:12.5px; margin-top:8px; color:var(--ink); line-height:1.4;}
+  .chk input{margin-top:2px;}
+  .summary{display:flex; gap:10px; flex-wrap:wrap; margin-top:8px;}
+  .sumbox{background:#F4FAF5; border:1px solid var(--line); border-radius:8px; padding:6px 12px; text-align:center;}
+  .sumbox .n{font-size:18px; font-weight:700; color:var(--green-d);}
+  .sumbox .l{font-size:11px; color:var(--ink2);}
+</style>
+</head>
+<body>
+<header>
+  <span class="logo">AIS Fibre</span>
+  <div>
+    <h1>FTTH Plan Status</h1>
+    <div class="sub">อัปเดตสถานะร้อยสายจาก Excel ลงแบบหมู่บ้าน (PDF) — สำหรับรายงานกลุ่มลูกค้า</div>
+  </div>
+</header>
+
+<div class="layout">
+  <!-- ================= LEFT ================= -->
+  <div>
+    <div class="panel">
+      <h2><span class="step">1</span> นำเข้าไฟล์</h2>
+      <label class="filebtn" id="pdfBtn">📄 เลือกไฟล์แบบหมู่บ้าน (PDF)
+        <input type="file" id="pdfInput" accept="application/pdf">
+      </label>
+      <div style="height:8px"></div>
+      <label class="filebtn" id="xlsBtn">📊 เลือกไฟล์ Excel สถานะบ้าน
+        <input type="file" id="xlsInput" accept=".xlsx,.xls,.csv">
+      </label>
+      <div id="colPick" style="display:none">
+        <div class="row"><label style="width:90px">คอลัมน์บ้านเลขที่</label><select id="colAddr"></select></div>
+        <div class="row"><label style="width:90px">คอลัมน์สถานะ</label><select id="colStatus"></select></div>
+      </div>
+      <div class="hint">บ้านเลขที่แบบ 555/16 จะถูกจับคู่กับหมายเลขแปลง <b>16</b> ในแบบอัตโนมัติ</div>
+    </div>
+
+    <div class="panel" id="statusPanel" style="display:none">
+      <h2><span class="step">2</span> สีตามสถานะ</h2>
+      <div id="statusList"></div>
+    </div>
+
+    <div class="panel" id="housePanel" style="display:none">
+      <h2><span class="step">3</span> ตำแหน่งบ้านบนแบบ <span id="mapCount" style="margin-left:auto;font-weight:500;color:var(--ink2)"></span></h2>
+      <div class="banner info" id="mapHint">เลือกบ้านในรายการ แล้ว<b>คลิกตำแหน่งบ้านหลังนั้นบนแบบ</b> ระบบจะเลื่อนไปบ้านถัดไปให้อัตโนมัติ (ทำครั้งเดียวต่อหมู่บ้าน แล้วบันทึกตำแหน่งเป็นไฟล์ไว้ใช้ซ้ำ)</div>
+      <div class="btnrow">
+        <button class="btn primary small" id="aiBtn" style="flex:1">🤖 AI ตรวจหาเลขแปลงบนแบบอัตโนมัติ</button>
+      </div>
+      <div id="aiMsg"></div>
+      <div id="houseList" style="margin-top:8px"></div>
+      <div class="btnrow">
+        <button class="btn ghost small" id="saveMapBtn">💾 บันทึกตำแหน่ง (JSON)</button>
+        <label class="btn ghost small" style="cursor:pointer">📂 โหลดตำแหน่ง<input type="file" id="mapInput" accept=".json" style="display:none"></label>
+        <button class="btn danger small" id="clearMapBtn">ล้างตำแหน่งทั้งหมด</button>
+      </div>
+    </div>
+
+    <div class="panel" id="exportPanel" style="display:none">
+      <h2><span class="step">4</span> สร้าง PDF รายงาน</h2>
+      <div class="row"><label>ความหนาเส้นกรอบ</label>
+        <input type="number" id="strokeW" value="2" min="1" max="8" step="0.5" style="width:70px">
+        <label style="margin-left:8px"><input type="checkbox" id="fillBox"> ระบายสีโปร่งใส</label>
+      </div>
+      <label class="chk"><input type="checkbox" id="labelBox" checked> พิมพ์บ้านเลขที่กำกับทุกกรอบ (แก้ปัญหาเลขในแบบไม่ตรง)</label>
+      <label class="chk"><input type="checkbox" id="stripOld" checked> ลบกรอบสี (Square annotation) เดิมในไฟล์ PDF ออกก่อน</label>
+      <label class="chk"><input type="checkbox" id="addLegend" checked> แนบกล่องสรุปสถานะ + วันที่ลงใน PDF
+        <select id="legendPos" style="width:110px; margin-left:6px">
+          <option value="br">มุมขวาล่าง</option>
+          <option value="bl">มุมซ้ายล่าง</option>
+          <option value="tr">มุมขวาบน</option>
+          <option value="tl">มุมซ้ายบน</option>
+        </select>
+      </label>
+      <div class="summary" id="sumRow"></div>
+      <div class="btnrow">
+        <button class="btn primary" id="exportBtn" style="flex:1">⬇️ ดาวน์โหลด PDF รายงาน</button>
+      </div>
+      <div id="exportMsg"></div>
+    </div>
+  </div>
+
+  <!-- ================= RIGHT ================= -->
+  <div class="canvas-wrap">
+    <div class="toolbar">
+      <div class="grp">🔍 ซูม <input type="range" id="zoom" min="0.8" max="3" step="0.1" value="1.4"><span id="zoomVal">140%</span></div>
+      <div class="grp">📐 ขนาดกรอบ ก<input type="range" id="boxW" min="10" max="80" value="30"> ส<input type="range" id="boxH" min="10" max="80" value="22"><span id="boxSizeVal">30×22</span></div>
+      <div class="grp" id="pageNav" style="display:none">หน้า <button class="btn ghost small" id="prevPg">◀</button><span id="pgLabel">1/1</span><button class="btn ghost small" id="nextPg">▶</button></div>
+      <div class="grp" style="margin-left:auto">คลิก = วางกรอบ · ลากกรอบ = ย้าย · ดับเบิลคลิกกรอบ = ลบ</div>
+    </div>
+    <div id="stage">
+      <div id="emptyMsg">
+        <div style="font-size:40px">🗺️</div>
+        <b>เริ่มโดยเลือกไฟล์แบบหมู่บ้าน (PDF) และไฟล์ Excel ทางซ้าย</b><br>
+        รอบแรก: วางตำแหน่งบ้านบนแบบครั้งเดียว แล้วบันทึกเป็นไฟล์ JSON<br>
+        รอบถัดไป: โหลดแบบ + Excel ที่อัปเดต + ไฟล์ตำแหน่ง → กดดาวน์โหลด PDF ได้ทันที
+      </div>
+      <canvas id="pdfCanvas" style="display:none"></canvas>
+      <canvas id="overlay" style="display:none"></canvas>
+    </div>
+  </div>
+</div>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+/* ---------- state ---------- */
+let pdfBytes = null, pdfDoc = null, pageNum = 1, pageCount = 1, scale = 1.4;
+let pageWpt = 0, pageHpt = 0;                 // PDF points of current page
+let houses = [];                              // {addr, plot, status}
+let statuses = [];                            // {name, color}
+let mapping = {};                             // addr -> {x,y,w,h,page} in PDF points (y = from bottom)
+let selectedHouse = null, selectedBox = null, dragging = null;
+let villageName = '';
+
+const PRESET = [
+  ['พร้อมติดตั้ง ONU', '#009E47'],
+  ['ติดตั้ง ONU ได้ เข้าภายในบ้านไม่ได้', '#92D050'],
+  ['อยู่ระหว่างงานเทส', '#FFE100'],
+  ['โครงการยังไม่ร้อยสาย', '#FF8A00'],
+  ['บ้านยังไม่พร้อมร้อยสาย', '#FF8A00'],
+  ['สายภายในขาด', '#E30613'],
+];
+
+const $ = id => document.getElementById(id);
+const canvas = $('pdfCanvas'), overlay = $('overlay'), stage = $('stage');
+const ctx = canvas.getContext('2d'), octx = overlay.getContext('2d');
+
+/* ---------- PDF load & render ---------- */
+$('pdfInput').addEventListener('change', async e => {
+  const f = e.target.files[0]; if(!f) return;
+  pdfBytes = new Uint8Array(await f.arrayBuffer());
+  pdfDoc = await pdfjsLib.getDocument({data: pdfBytes.slice()}).promise;
+  pageCount = pdfDoc.numPages; pageNum = 1;
+  $('pageNav').style.display = pageCount>1 ? 'flex' : 'none';
+  $('pdfBtn').classList.add('fileok');
+  $('pdfBtn').firstChild.textContent = '✅ ' + f.name + ' ';
+  $('emptyMsg').style.display='none';
+  canvas.style.display='block'; overlay.style.display='block';
+  await renderPage();
+});
+
+async function renderPage(){
+  if(!pdfDoc) return;
+  const page = await pdfDoc.getPage(pageNum);
+  const vp0 = page.getViewport({scale:1});
+  pageWpt = vp0.width; pageHpt = vp0.height;
+  const vp = page.getViewport({scale});
+  canvas.width = vp.width; canvas.height = vp.height;
+  overlay.width = vp.width; overlay.height = vp.height;
+  await page.render({canvasContext: ctx, viewport: vp}).promise;
+  $('pgLabel').textContent = pageNum + '/' + pageCount;
+  drawOverlay();
+}
+$('zoom').addEventListener('input', e=>{ scale=+e.target.value; $('zoomVal').textContent=Math.round(scale*100)+'%'; renderPage(); });
+$('prevPg').onclick = ()=>{ if(pageNum>1){pageNum--; renderPage();} };
+$('nextPg').onclick = ()=>{ if(pageNum<pageCount){pageNum++; renderPage();} };
+const boxSizeLbl = ()=> $('boxSizeVal').textContent = $('boxW').value+'×'+$('boxH').value;
+$('boxW').oninput = boxSizeLbl; $('boxH').oninput = boxSizeLbl;
+
+/* ---------- Excel load ---------- */
+let rawRows = [], headerRow = [];
+$('xlsInput').addEventListener('change', async e => {
+  const f = e.target.files[0]; if(!f) return;
+  const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
+  // find header row: contains a cell with 'บ้านเลขที่' and one with 'status' (or สถานะ)
+  let hIdx = rows.findIndex(r => r.some(c=>String(c).includes('บ้านเลขที่')) && r.some(c=>/status|สถานะ/i.test(String(c))));
+  if(hIdx<0) hIdx = 0;
+  headerRow = rows[hIdx].map(String);
+  rawRows = rows.slice(hIdx+1).filter(r=>r.some(c=>String(c).trim()!==''));
+  // column selects
+  const fill = (sel, guessFn)=>{ sel.innerHTML=''; headerRow.forEach((h,i)=>{ const o=document.createElement('option'); o.value=i; o.textContent=h||('คอลัมน์ '+(i+1)); sel.appendChild(o); }); const g=headerRow.findIndex(guessFn); if(g>=0) sel.value=g; };
+  fill($('colAddr'), h=>h.includes('บ้านเลขที่'));
+  fill($('colStatus'), h=>/^status$|สถานะ/i.test(h.trim()));
+  $('colPick').style.display='block';
+  villageName = String((rawRows[0]||[])[headerRow.findIndex(h=>h.includes('โครงการ'))] || wb.SheetNames[0] || '').trim();
+  $('xlsBtn').classList.add('fileok');
+  $('xlsBtn').firstChild.textContent = '✅ ' + f.name + ' ';
+  buildHouses();
+});
+$('colAddr').onchange = buildHouses;
+$('colStatus').onchange = buildHouses;
+
+function plotOf(addr){
+  addr = String(addr).trim();
+  const i = addr.lastIndexOf('/');
+  return i>=0 ? addr.slice(i+1).trim() : addr;
+}
+
+function buildHouses(){
+  const ca = +$('colAddr').value, cs = +$('colStatus').value;
+  houses = rawRows.map(r=>({ addr:String(r[ca]).trim(), plot:plotOf(r[ca]), status:String(r[cs]).trim() }))
+                  .filter(h=>h.addr);
+  // statuses: presets first (only ones present keep order), then unknowns
+  const present = [...new Set(houses.map(h=>h.status).filter(Boolean))];
+  statuses = [];
+  PRESET.forEach(([n,c])=>{ if(present.includes(n)) statuses.push({name:n,color:c}); });
+  present.forEach(n=>{ if(!statuses.find(s=>s.name===n)) statuses.push({name:n,color:'#8C8C8C'}); });
+  renderStatusList(); renderHouseList(); renderSummary();
+  $('statusPanel').style.display='block';
+  $('housePanel').style.display='block';
+  $('exportPanel').style.display='block';
+  if(!selectedHouse) selectNextUnmapped();
+  drawOverlay();
+}
+
+function colorOf(st){ const s=statuses.find(x=>x.name===st); return s?s.color:'#8C8C8C'; }
+
+/* ---------- side lists ---------- */
+function renderStatusList(){
+  const el = $('statusList'); el.innerHTML='';
+  statuses.forEach((s,i)=>{
+    const d=document.createElement('div'); d.className='status-item';
+    const ct = houses.filter(h=>h.status===s.name).length;
+    d.innerHTML = `<input type="color" value="${s.color}"><span class="nm">${s.name}</span><span class="ct">${ct}</span>`;
+    d.querySelector('input').addEventListener('input',e=>{ statuses[i].color=e.target.value; renderHouseList(); renderSummary(); drawOverlay(); });
+    el.appendChild(d);
+  });
+}
+function renderHouseList(){
+  const el = $('houseList'); el.innerHTML='';
+  houses.forEach(h=>{
+    const d=document.createElement('div'); d.className='house'+(selectedHouse===h.addr?' sel':'');
+    const m = mapping[h.addr];
+    d.innerHTML = `<span class="dot" style="background:${colorOf(h.status)}"></span><span class="plot">${h.plot}</span><span class="addr">${h.addr}</span><span class="pin ${m?'ok':'no'}">${m?'📍วางแล้ว':'ยังไม่วาง'}</span>`;
+    d.onclick = ()=>{ selectedHouse=h.addr; renderHouseList(); const mm=mapping[h.addr]; if(mm&&mm.page!==pageNum){pageNum=mm.page;renderPage();} drawOverlay(); };
+    el.appendChild(d);
+  });
+  const mapped = Object.keys(mapping).filter(a=>houses.find(h=>h.addr===a)).length;
+  $('mapCount').textContent = `วางแล้ว ${mapped}/${houses.length}`;
+}
+function renderSummary(){
+  const el=$('sumRow'); el.innerHTML='';
+  statuses.forEach(s=>{
+    const ct=houses.filter(h=>h.status===s.name).length; if(!ct) return;
+    el.insertAdjacentHTML('beforeend',`<div class="sumbox" style="border-left:4px solid ${s.color}"><div class="n">${ct}</div><div class="l">${s.name}</div></div>`);
+  });
+  el.insertAdjacentHTML('beforeend',`<div class="sumbox"><div class="n">${houses.length}</div><div class="l">รวมทั้งหมด</div></div>`);
+}
+function selectNextUnmapped(){
+  const h = houses.find(h=>!mapping[h.addr]);
+  selectedHouse = h ? h.addr : null;
+  renderHouseList();
+  const sel = document.querySelector('.house.sel'); if(sel) sel.scrollIntoView({block:'nearest'});
+}
+
+/* ---------- overlay draw ---------- */
+function drawOverlay(){
+  octx.clearRect(0,0,overlay.width,overlay.height);
+  houses.forEach(h=>{
+    const m = mapping[h.addr]; if(!m || m.page!==pageNum) return;
+    const x=(m.x-m.w/2)*scale, y=(pageHpt-m.y-m.h/2)*scale, w=m.w*scale, hh=m.h*scale;
+    octx.lineWidth = Math.max(2, 2*scale*0.8);
+    octx.strokeStyle = colorOf(h.status);
+    if($('fillBox').checked){ octx.fillStyle=colorOf(h.status)+'40'; octx.fillRect(x,y,w,hh); }
+    octx.save();
+    if(m.ai) octx.setLineDash([6,4]);           // AI-placed: dashed until user adjusts
+    octx.strokeRect(x,y,w,hh);
+    octx.restore();
+    if($('labelBox') && $('labelBox').checked){  // generated house-number text layer
+      const lbl = h.addr, fs = Math.max(9, 7*scale);
+      octx.font = '600 '+fs+'px Prompt, Sarabun, sans-serif';
+      const tw = octx.measureText(lbl).width;
+      octx.fillStyle = 'rgba(255,255,255,0.9)';
+      octx.fillRect(x-1, y-fs-4, tw+4, fs+3);
+      octx.fillStyle = colorOf(h.status);
+      octx.fillText(lbl, x+1, y-4);
+    }
+    if(selectedHouse===h.addr){
+      octx.save(); octx.setLineDash([5,4]); octx.strokeStyle='#175CD3'; octx.lineWidth=1.5;
+      octx.strokeRect(x-4,y-4,w+8,hh+8); octx.restore();
+    }
+  });
+}
+$('fillBox').addEventListener('change', drawOverlay);
+$('labelBox').addEventListener('change', drawOverlay);
+
+/* ---------- AI auto-detect (OCR) ---------- */
+$('aiBtn').onclick = async ()=>{
+  if(!pdfDoc){ alert('ยังไม่ได้เลือกไฟล์ PDF แบบหมู่บ้าน'); return; }
+  if(!houses.length){ alert('เลือกไฟล์ Excel ก่อน เพื่อให้ AI รู้ว่าต้องหาเลขอะไรบ้าง'); return; }
+  const btn = $('aiBtn'); btn.disabled = true;
+  const prog = p => btn.textContent = '🤖 กำลังอ่านแบบ... ' + Math.round(p*100) + '%';
+  prog(0);
+  try{
+    // render current page offscreen at high resolution for OCR accuracy
+    const page = await pdfDoc.getPage(pageNum);
+    const OS = 3, vp = page.getViewport({scale:OS});
+    const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
+    await page.render({canvasContext: c.getContext('2d'), viewport: vp}).promise;
+
+    const worker = await Tesseract.createWorker('eng', 1, {logger: m=>{ if(m.status==='recognizing text') prog(m.progress); }});
+    await worker.setParameters({tessedit_char_whitelist:'0123456789/', tessedit_pageseg_mode:'11'});
+    const {data} = await worker.recognize(c);
+    await worker.terminate();
+
+    // wanted plot numbers from Excel (generated text source of truth)
+    const wanted = new Map();                       // plot -> addr
+    houses.forEach(h=>{ if(!wanted.has(h.plot)) wanted.set(h.plot, h.addr); });
+
+    const cand = {};                                // plot -> [{x,y,conf}]
+    (data.words||[]).forEach(w=>{
+      const t = w.text.trim().replace(/\/$/,'');
+      if(!wanted.has(t)) return;
+      if(w.confidence < 45) return;
+      const bw=(w.bbox.x1-w.bbox.x0)/OS, bh=(w.bbox.y1-w.bbox.y0)/OS;
+      if(bw>28 || bh>18) return;                    // too big = heading, not a plot number
+      const cx=(w.bbox.x0+w.bbox.x1)/2/OS, cyTop=(w.bbox.y0+w.bbox.y1)/2/OS;
+      (cand[t]=cand[t]||[]).push({x:cx, y:pageHpt-cyTop, conf:w.confidence});
+    });
+
+    let placed=0, dup=[];
+    Object.entries(cand).forEach(([plot,recs])=>{
+      const addr = wanted.get(plot);
+      if(mapping[addr]) return;                     // never overwrite existing/manual positions
+      recs.sort((a,b)=>b.conf-a.conf);
+      mapping[addr] = {x:recs[0].x, y:recs[0].y, w:+$('boxW').value, h:+$('boxH').value, page:pageNum, ai:true};
+      placed++;
+      if(recs.length>1) dup.push(plot);
+    });
+
+    const left = houses.filter(h=>!mapping[h.addr]).length;
+    let msg = 'AI วางตำแหน่งให้ '+placed+' หลัง (กรอบเส้นประ) — โปรดตรวจและลากปรับจุดที่คลาดเคลื่อน';
+    if(dup.length) msg += '<br>⚠️ เลขที่พบซ้ำหลายจุดบนแบบ โปรดตรวจเป็นพิเศษ: '+dup.join(', ');
+    if(left) msg += '<br>เหลือวางเองอีก '+left+' หลัง (เลขที่ OCR อ่านไม่เจอ)';
+    $('aiMsg').innerHTML = '<div class="banner '+(placed?'ok':'info')+'">'+msg+'</div>';
+    renderHouseList(); selectNextUnmapped(); drawOverlay();
+  }catch(err){ alert('AI ตรวจหาไม่สำเร็จ: '+err.message+'\n(ต้องต่ออินเทอร์เน็ตครั้งแรกเพื่อโหลดตัวอ่าน OCR)'); console.error(err); }
+  btn.disabled = false; btn.textContent = '🤖 AI ตรวจหาเลขแปลงบนแบบอัตโนมัติ';
+};
+
+/* ---------- pointer interaction ---------- */
+function toPdf(evt){
+  const r = overlay.getBoundingClientRect();
+  const cx = (evt.clientX-r.left)/scale, cy=(evt.clientY-r.top)/scale;
+  return {x:cx, y:pageHpt-cy}; // pdf coords (y up)
+}
+function boxAt(p){
+  for(const h of houses){
+    const m=mapping[h.addr];
+    if(m && m.page===pageNum && Math.abs(p.x-m.x)<=m.w/2+3 && Math.abs(p.y-m.y)<=m.h/2+3) return h.addr;
+  }
+  return null;
+}
+overlay.addEventListener('pointerdown', e=>{
+  if(!houses.length) return;
+  const p = toPdf(e);
+  const hit = boxAt(p);
+  if(hit){
+    selectedHouse = hit; dragging = {addr:hit, dx:p.x-mapping[hit].x, dy:p.y-mapping[hit].y, moved:false};
+    overlay.setPointerCapture(e.pointerId);
+    renderHouseList(); drawOverlay();
+  } else if(selectedHouse){
+    mapping[selectedHouse] = {x:p.x, y:p.y, w:+$('boxW').value, h:+$('boxH').value, page:pageNum};
+    selectNextUnmapped(); drawOverlay();
+  }
+});
+overlay.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  const p = toPdf(e);
+  const m = mapping[dragging.addr];
+  m.x = p.x-dragging.dx; m.y = p.y-dragging.dy; dragging.moved=true; m.ai=false;
+  drawOverlay();
+});
+overlay.addEventListener('pointerup', ()=>{ dragging=null; });
+overlay.addEventListener('dblclick', e=>{
+  const hit = boxAt(toPdf(e));
+  if(hit && confirm('ลบกรอบของบ้าน '+hit+' ?')){ delete mapping[hit]; renderHouseList(); drawOverlay(); }
+});
+
+/* ---------- mapping save / load ---------- */
+$('saveMapBtn').onclick = ()=>{
+  const data = {village: villageName, pageW: pageWpt, pageH: pageHpt, mapping};
+  const blob = new Blob([JSON.stringify(data,null,1)],{type:'application/json'});
+  dl(blob, 'ตำแหน่งบ้าน_'+(villageName||'หมู่บ้าน').slice(0,40)+'.json');
+};
+$('mapInput').addEventListener('change', async e=>{
+  const f=e.target.files[0]; if(!f) return;
+  try{
+    const data = JSON.parse(await f.text());
+    const raw = data.mapping||data;
+    mapping = {};
+    // match by full address, fallback: by plot label
+    Object.entries(raw).forEach(([addr,m])=>{
+      let h = houses.find(x=>x.addr===addr) || houses.find(x=>x.plot===plotOf(addr));
+      mapping[h?h.addr:addr] = m;
+    });
+    renderHouseList(); drawOverlay();
+    toast('โหลดตำแหน่ง '+Object.keys(mapping).length+' จุดแล้ว','ok');
+  }catch(err){ alert('ไฟล์ตำแหน่งไม่ถูกต้อง: '+err.message); }
+  e.target.value='';
+});
+$('clearMapBtn').onclick = ()=>{ if(confirm('ล้างตำแหน่งทั้งหมด?')){ mapping={}; renderHouseList(); drawOverlay(); } };
+
+/* ---------- export PDF ---------- */
+function hexRgb(hex){ const n=parseInt(hex.slice(1),16); return PDFLib.rgb(((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255); }
+
+async function legendPng(){
+  // render Thai legend text on an offscreen canvas (pdf-lib std fonts can't do Thai)
+  const items = statuses.map(s=>({...s, ct:houses.filter(h=>h.status===s.name).length})).filter(s=>s.ct>0);
+  const dateStr = 'อัปเดต ' + new Date().toLocaleDateString('th-TH',{day:'numeric',month:'short',year:'numeric'});
+  const S=2, pad=10*S, row=20*S, fw=15*S;
+  const c=document.createElement('canvas'); const g=c.getContext('2d');
+  g.font = (13*S)+'px Prompt, Sarabun, sans-serif';
+  let maxw=g.measureText((villageName||'สรุปสถานะ')).width;
+  items.forEach(s=>{ maxw=Math.max(maxw, g.measureText(s.name+'  '+s.ct+' หลัง').width + fw+8*S); });
+  maxw=Math.max(maxw, g.measureText(dateStr).width);
+  c.width = Math.ceil(maxw+pad*2); c.height = pad*2 + row*(items.length+2);
+  g.fillStyle='rgba(255,255,255,0.95)'; g.fillRect(0,0,c.width,c.height);
+  g.strokeStyle='#333'; g.lineWidth=S; g.strokeRect(S/2,S/2,c.width-S,c.height-S);
+  g.font='bold '+(13*S)+'px Prompt, Sarabun, sans-serif'; g.fillStyle='#122B1D';
+  g.fillText('สรุปสถานะร้อยสาย Fiber', pad, pad+13*S);
+  g.font=(12*S)+'px Prompt, Sarabun, sans-serif';
+  items.forEach((s,i)=>{
+    const y = pad + row*(i+1);
+    g.fillStyle=s.color; g.fillRect(pad, y+4*S, fw, 12*S);
+    g.strokeStyle='#0003'; g.strokeRect(pad, y+4*S, fw, 12*S);
+    g.fillStyle='#122B1D'; g.fillText(s.name+'  '+s.ct+' หลัง', pad+fw+8*S, y+13*S);
+  });
+  g.fillStyle='#4A6355'; g.fillText(dateStr, pad, pad + row*(items.length+1) + 13*S);
+  return {png:c.toDataURL('image/png'), w:c.width/S, h:c.height/S};
+}
+
+$('exportBtn').onclick = async ()=>{
+  if(!pdfBytes){ alert('ยังไม่ได้เลือกไฟล์ PDF แบบหมู่บ้าน'); return; }
+  if(!houses.length){ alert('ยังไม่ได้เลือกไฟล์ Excel'); return; }
+  const missing = houses.filter(h=>!mapping[h.addr]).length;
+  if(missing && !confirm('มีบ้าน '+missing+' หลังที่ยังไม่ได้วางตำแหน่งบนแบบ จะไม่ถูกแสดงใน PDF — ดำเนินการต่อ?')) return;
+  $('exportBtn').disabled=true;
+  try{
+    const doc = await PDFLib.PDFDocument.load(pdfBytes);
+    const pages = doc.getPages();
+    // strip old Square annotations
+    if($('stripOld').checked){
+      pages.forEach(pg=>{
+        const annots = pg.node.Annots(); if(!annots) return;
+        const keep = [];
+        for(let i=0;i<annots.size();i++){
+          const ref = annots.get(i);
+          const d = doc.context.lookup(ref);
+          const sub = d && d.get ? d.get(PDFLib.PDFName.of('Subtype')) : null;
+          if(!sub || sub.toString() !== '/Square') keep.push(ref);
+        }
+        pg.node.set(PDFLib.PDFName.of('Annots'), doc.context.obj(keep));
+      });
+    }
+    const sw = +$('strokeW').value, fill = $('fillBox').checked, withLabel = $('labelBox').checked;
+    const font = withLabel ? await doc.embedFont(PDFLib.StandardFonts.HelveticaBold) : null;
+    houses.forEach(h=>{
+      const m = mapping[h.addr]; if(!m) return;
+      const pg = pages[(m.page||1)-1]; if(!pg) return;
+      const col = hexRgb(colorOf(h.status));
+      pg.drawRectangle({
+        x:m.x-m.w/2, y:m.y-m.h/2, width:m.w, height:m.h,
+        borderColor:col, borderWidth:sw,
+        color: fill? col : undefined, opacity: fill? 0.25 : 1,
+      });
+      if(withLabel){
+        // generated house-number text layer: authoritative numbers from Excel
+        const ascii = /^[\x20-\x7E]+$/.test(h.addr);
+        const lbl = ascii ? h.addr : h.plot;        // Thai chars fall back to plot no.
+        const fs = 6.5;
+        const tw = font.widthOfTextAtSize(lbl, fs);
+        const lx = m.x-m.w/2, ly = m.y+m.h/2+2;
+        pg.drawRectangle({x:lx-1, y:ly-1, width:tw+3, height:fs+2, color:PDFLib.rgb(1,1,1), opacity:0.85});
+        pg.drawText(lbl, {x:lx, y:ly, size:fs, font, color:col});
+      }
+    });
+    if($('addLegend').checked){
+      const {png,w,h} = await legendPng();
+      const img = await doc.embedPng(png);
+      const pg = pages[pageNum-1] || pages[0];
+      const PW = pg.getWidth(), PH = pg.getHeight(), M=14;
+      const pos = $('legendPos').value;
+      const x = pos.includes('r') ? PW-w-M : M;
+      const y = pos.includes('t') ? PH-h-M : M;
+      pg.drawImage(img,{x,y,width:w,height:h});
+    }
+    const out = await doc.save();
+    const d = new Date(), ds = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+    dl(new Blob([out],{type:'application/pdf'}), 'Progress_'+(villageName||'FTTH').replace(/\s+/g,'_').slice(0,50)+'_'+ds+'.pdf');
+    toast('สร้าง PDF สำเร็จ ✓ พร้อมส่งรายงานในกลุ่มลูกค้า','ok');
+  }catch(err){ alert('สร้าง PDF ไม่สำเร็จ: '+err.message); console.error(err); }
+  $('exportBtn').disabled=false;
+};
+
+function dl(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); }
+function toast(msg,kind){ $('exportMsg').innerHTML='<div class="banner '+(kind||'info')+'">'+msg+'</div>'; setTimeout(()=>$('exportMsg').innerHTML='',6000); }
+</script>
+</body>
+</html>
