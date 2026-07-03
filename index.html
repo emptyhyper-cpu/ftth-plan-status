@@ -37,6 +37,11 @@
   .status-item:last-child{border-bottom:none;}
   .status-item input[type=color]{width:30px; height:24px; border:none; padding:0; background:none; cursor:pointer; flex:none;}
   .status-item .nm{flex:1; line-height:1.3;}
+  .status-item .nm-edit{flex:1; border:1px solid transparent; border-radius:5px; padding:3px 5px; font-family:inherit; font-size:12.5px; background:transparent; min-width:0;}
+  .status-item .nm-edit:hover{border-color:var(--line); background:#fff;}
+  .status-item .nm-edit:focus{border-color:var(--green); background:#fff; outline:none;}
+  .status-item .del{border:none; background:none; color:#B8C7BC; cursor:pointer; font-size:13px; padding:2px 4px; flex:none;}
+  .status-item .del:hover{color:var(--danger);}
   .status-item .ct{font-weight:600; color:var(--green-d); flex:none;}
   #houseList{max-height:260px; overflow:auto; border:1px solid var(--line); border-radius:8px; margin-top:8px;}
   .house{display:flex; align-items:center; gap:8px; padding:6px 10px; border-bottom:1px solid #EFF5F0; cursor:pointer; font-size:13px;}
@@ -106,13 +111,8 @@
       <div id="autoMsg"></div>
     </div>
 
-    <div class="panel" id="statusPanel" style="display:none">
-      <h2><span class="step">2</span> สีไฮไลท์ตามสถานะ</h2>
-      <div id="statusList"></div>
-    </div>
-
     <div class="panel" id="housePanel" style="display:none">
-      <h2><span class="step">3</span> วางบ้านเลขที่บนแบบ <span id="mapCount" style="margin-left:auto;font-weight:500;color:var(--ink2)"></span></h2>
+      <h2><span class="step">2</span> วางบ้านเลขที่บนแบบ <span id="mapCount" style="margin-left:auto;font-weight:500;color:var(--ink2)"></span></h2>
       <div class="banner info" id="mapHint"><b>ทำครั้งแรกครั้งเดียว:</b> กดปุ่ม AI ก่อน แล้วเก็บตกที่เหลือโดยเลือกบ้านในรายการ → แตะจุดบนแบบ เสร็จแล้วกด "บันทึกไฟล์แบบ Master" รอบต่อไปไม่ต้องวางอีก</div>
       <div class="btnrow">
         <button class="btn primary small" id="aiBtn" style="flex:1">🤖 AI ตรวจหาเลขแปลงอัตโนมัติ</button>
@@ -130,7 +130,7 @@
     </div>
 
     <div class="panel" id="exportPanel" style="display:none">
-      <h2><span class="step">4</span> สร้าง PDF รายงาน</h2>
+      <h2><span class="step">3</span> สร้าง PDF รายงาน</h2>
       <label class="chk"><input type="checkbox" id="stripOld" checked> ลบกรอบสี (annotation) เดิมในไฟล์แบบออกก่อน</label>
       <label class="chk"><input type="checkbox" id="addLegend" checked> แนบกล่องสรุปสถานะ + วันที่ลงใน PDF
         <select id="legendPos" style="width:110px; margin-left:6px">
@@ -145,6 +145,11 @@
         <button class="btn primary" id="exportBtn" style="flex:1">⬇️ ดาวน์โหลด PDF รายงาน</button>
       </div>
       <div id="exportMsg"></div>
+    </div>
+
+    <div class="panel" id="statusPanel" style="display:none">
+      <h2><span class="step">4</span> ปรับสี / ข้อความสถานะ (ถ้าต้องการ)</h2>
+      <div id="statusList"></div>
     </div>
   </div>
 
@@ -184,13 +189,16 @@ let pendingMap = null;                 // mapping loaded from PDF metadata befor
 let selectedHouse = null, undoStack = [];
 let villageName = '';
 
-const PRESET = [
-  ['พร้อมติดตั้ง ONU', '#009E47'],
-  ['ติดตั้ง ONU ได้ เข้าภายในบ้านไม่ได้', '#92D050'],
-  ['อยู่ระหว่างงานเทส', '#FFE100'],
-  ['โครงการยังไม่ร้อยสาย', '#FF8A00'],
-  ['บ้านยังไม่พร้อมร้อยสาย', '#FF8A00'],
-  ['สายภายในขาด', '#E30613'],
+const DEFAULTS = [
+  ['พร้อมติดตั้ง ONU', '#00A651'],
+  ['บ้านยังไม่พร้อมร้อยสาย', '#7F7F7F'],
+  ['ท่อ Main ตัน', '#FF00FF'],
+  ['บ่อพักไม่พร้อมร้อยสาย', '#FF0000'],
+  ['ท่อจากบ่อพักไปตู้ Post ตัน', '#7F6000'],
+  ['ท่อภายในบ้านตัน', '#FFFF00'],
+  ['อยู่ระหว่างการเดินสาย Main Fiber', '#7030A0'],
+  ['อยู่ระหว่างการเดินสาย Drop Fiber เข้าบ้าน', '#0070C0'],
+  ['อยู่ระหว่างการ Terminate ปล่อยสัญญาณ', '#00B0F0'],
 ];
 
 const $ = id => document.getElementById(id);
@@ -217,9 +225,10 @@ $('pdfInput').addEventListener('change', async e => {
     if(sub.startsWith(MAGIC)){
       const data = JSON.parse(sub.slice(MAGIC.length));
       pendingMap = data.mapping || {};
+      if(Array.isArray(data.statuses) && data.statuses.length){ statuses = data.statuses; if(houses.length){ renderStatusList(); renderSummary(); } }
       if(data.village && !villageName) villageName = data.village;
       if(houses.length) applyMapping(pendingMap);
-      $('autoMsg').innerHTML = '<div class="banner ok">✅ ไฟล์แบบ Master — โหลดตำแหน่งบ้าน '+Object.keys(pendingMap).length+' หลังอัตโนมัติ ไม่ต้องวางใหม่</div>';
+      $('autoMsg').innerHTML = '<div class="banner ok">✅ ไฟล์แบบ Master — โหลดตำแหน่งบ้าน '+Object.keys(pendingMap).length+' หลัง + ชุดสีที่ตั้งไว้อัตโนมัติ</div>';
     }
   }catch(err){ console.warn('no metadata', err); }
   await renderPage(true);
@@ -280,9 +289,8 @@ function buildHouses(){
   houses = rawRows.map(r=>({ addr:String(r[ca]).trim(), plot:plotOf(r[ca]), status:String(r[cs]).trim() }))
                   .filter(h=>h.addr);
   const present = [...new Set(houses.map(h=>h.status).filter(Boolean))];
-  statuses = [];
-  PRESET.forEach(([n,c])=>{ if(present.includes(n)) statuses.push({name:n,color:c}); });
-  present.forEach(n=>{ if(!statuses.find(s=>s.name===n)) statuses.push({name:n,color:'#8C8C8C'}); });
+  if(!statuses.length) statuses = DEFAULTS.map(([n,c])=>({name:n, color:c}));
+  present.forEach(n=>{ if(!statuses.find(s=>s.name===n)) statuses.push({name:n, color:'#8C8C8C'}); });
   if(pendingMap){ applyMapping(pendingMap); pendingMap=null; }
   renderStatusList(); renderHouseList(); renderSummary();
   $('statusPanel').style.display='block';
@@ -309,9 +317,25 @@ function renderStatusList(){
   statuses.forEach((s,i)=>{
     const d=document.createElement('div'); d.className='status-item';
     const ct = houses.filter(h=>h.status===s.name).length;
-    d.innerHTML = `<input type="color" value="${s.color}"><span class="nm">${s.name}</span><span class="ct">${ct}</span>`;
-    d.querySelector('input').addEventListener('input',e=>{ statuses[i].color=e.target.value; renderHouseList(); renderSummary(); drawOverlay(); });
+    d.innerHTML = `<input type="color" value="${s.color}">
+      <input type="text" class="nm-edit" value="${s.name.replace(/"/g,'&quot;')}">
+      <span class="ct" title="จำนวนบ้านใน Excel ที่ตรงกับข้อความนี้">${ct}</span>
+      <button class="del" title="ลบสถานะนี้">✕</button>`;
+    d.querySelector('input[type=color]').addEventListener('input',e=>{ statuses[i].color=e.target.value; renderHouseList(); renderSummary(); drawOverlay(); });
+    d.querySelector('.nm-edit').addEventListener('input',e=>{ statuses[i].name=e.target.value; refreshCounts(); renderHouseList(); renderSummary(); drawOverlay(); });
+    d.querySelector('.del').addEventListener('click',()=>{ statuses.splice(i,1); renderStatusList(); renderHouseList(); renderSummary(); drawOverlay(); });
     el.appendChild(d);
+  });
+  const unmatched = [...new Set(houses.map(h=>h.status).filter(Boolean))].filter(n=>!statuses.find(s=>s.name===n));
+  if(unmatched.length)
+    el.insertAdjacentHTML('beforeend','<div class="banner warn">สถานะใน Excel ที่ยังไม่ตรงกับรายการ (จะแสดงสีเทา): '+unmatched.join(' · ')+'<br>แก้ข้อความในรายการให้สะกดตรงกัน หรือกดเพิ่มสถานะ</div>');
+  el.insertAdjacentHTML('beforeend','<div class="btnrow"><button class="btn ghost small" id="addStBtn">＋ เพิ่มสถานะ</button></div>');
+  $('addStBtn').onclick = ()=>{ statuses.push({name:'สถานะใหม่', color:'#8C8C8C'}); renderStatusList(); };
+}
+function refreshCounts(){
+  document.querySelectorAll('#statusList .status-item').forEach((d,i)=>{
+    if(!statuses[i]) return;
+    d.querySelector('.ct').textContent = houses.filter(h=>h.status===statuses[i].name).length;
   });
 }
 function renderHouseList(){
@@ -505,7 +529,7 @@ function hexRgb(hex){ const n=parseInt(hex.slice(1),16); return PDFLib.rgb(((n>>
 function metaString(){
   const clean = {};
   Object.entries(mapping).forEach(([a,m])=>{ clean[a] = {x:+m.x.toFixed(1), y:+m.y.toFixed(1), page:m.page||1}; });
-  return MAGIC + JSON.stringify({village: villageName, mapping: clean});
+  return MAGIC + JSON.stringify({village: villageName, mapping: clean, statuses});
 }
 function dl(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); }
 function toast(el,msg,kind){ $(el).innerHTML='<div class="banner '+(kind||'info')+'">'+msg+'</div>'; setTimeout(()=>$(el).innerHTML='',8000); }
