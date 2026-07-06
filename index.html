@@ -161,6 +161,8 @@
         <button class="btn ghost small" id="rotBtn" title="หมุนแบบ 90°">↻ หมุน</button></div>
       <div class="grp">🔤 ขนาดเลขที่ <input type="range" id="fontSize" min="5" max="14" step="0.5" value="7"><span id="fsVal">7</span>
         <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fullAddr" checked> เลขเต็ม (555/16)</label></div>
+      <div class="grp">📐 กว้าง <input type="range" id="padW" min="2" max="12" step="0.5" value="5"></div>
+      <div class="grp">🎨 เข้มสี <input type="range" id="tintStr" min="20" max="100" value="60"><span id="tintVal">60%</span></div>
       <div class="grp" id="pageNav" style="display:none">หน้า <button class="btn ghost small" id="prevPg">◀</button><span id="pgLabel">1/1</span><button class="btn ghost small" id="nextPg">▶</button></div>
       <div class="grp" style="margin-left:auto">
         <button class="btn primary small" id="exportBtn2">⬇️ Export PDF</button>
@@ -239,6 +241,12 @@ $('pdfInput').addEventListener('change', async e => {
       pendingMap = data.mapping || {};
       if(Array.isArray(data.statuses) && data.statuses.length){ statuses = data.statuses; if(houses.length){ renderStatusList(); renderSummary(); } }
       if(typeof data.rot === 'number') rot = ((data.rot % 360)+360)%360;
+      if(data.style){
+        if(data.style.fs){ $('fontSize').value = data.style.fs; $('fsVal').textContent = data.style.fs; }
+        if(data.style.padx) $('padW').value = data.style.padx;
+        if(data.style.tint){ $('tintStr').value = data.style.tint; $('tintVal').textContent = data.style.tint+'%'; }
+        if(typeof data.style.full === 'boolean') $('fullAddr').checked = data.style.full;
+      }
       if(data.village && !villageName) villageName = data.village;
       if(houses.length) applyMapping(pendingMap);
       $('autoMsg').innerHTML = '<div class="banner ok">✅ ไฟล์แบบ Master — โหลดตำแหน่งบ้าน '+Object.keys(pendingMap).length+' หลัง + ชุดสีที่ตั้งไว้อัตโนมัติ</div>';
@@ -275,6 +283,8 @@ async function renderPage(fit){
   drawOverlay();
 }
 $('exportBtn2').onclick = ()=> $('exportBtn').click();
+$('padW').addEventListener('input', drawOverlay);
+$('tintStr').addEventListener('input', ()=>{ $('tintVal').textContent = $('tintStr').value+'%'; drawOverlay(); });
 $('rotBtn').onclick = ()=>{ rot = (rot+90)%360; renderPage(true); };
 $('fullAddr').addEventListener('change', drawOverlay);
 $('zoom').addEventListener('input', e=>{ scale=+e.target.value; renderPage(); });
@@ -363,11 +373,13 @@ function inkOf(hex){
   while(L > 145){ r*=0.72; g*=0.72; b*=0.72; L = 0.299*r+0.587*g+0.114*b; }
   return toHex(r,g,b);
 }
-// very light tint of status color for badge background
-function tintOf(hex, f=0.85){
+// badge background: status color mixed toward white — slider controls vividness
+function tintOf(hex){
+  const f = 1 - (+$('tintStr').value)/100;    // 60% เข้ม → f=0.40 (สดขึ้นมาก)
   const [r,g,b] = rgbOf(hex);
   return toHex(r+(255-r)*f, g+(255-g)*f, b+(255-b)*f);
 }
+const PX = ()=> +$('padW').value;             // badge horizontal padding (รูปทรงผืนผ้า)
 // badge label lines: full address splits into ["98/","16"] for a squarer badge
 function chipLines(h){
   const full = $('fullAddr') && $('fullAddr').checked;
@@ -452,8 +464,15 @@ function chipScreen(h){
     tw = octx.measureText(lines[0]).width;
   }
   const hh = (lines.length===2 ? fs1+fs+PADY*2+1 : fs+PADY*2)*scale;
-  const w  = Math.max(tw + PADX*2*scale, hh);   // at least square
+  const w  = Math.max(tw + PX()*2*scale, hh*1.4);   // rectangular (กว้างกว่าสูงเล็กน้อย)
   return {x:sx-w/2, y:sy-hh/2, w, h:hh, cx:sx, cy:sy, lines, fs1};
+}
+// pick text color that reads clearly on the tinted background
+function badgeText(col){
+  const tint = tintOf(col);
+  const [r,g,b] = rgbOf(tint);
+  const L = 0.299*r+0.587*g+0.114*b;
+  return L > 140 ? inkOf(col) : '#FFFFFF';
 }
 
 /* ---------- overlay draw ---------- */
@@ -466,7 +485,7 @@ function drawOverlay(){
   houses.forEach(h=>{
     const r = chipScreen(h); if(!r) return;
     const m = mapping[h.addr];
-    const col = colorOf(h.status), ink = inkOf(col), tint = tintOf(col);
+    const col = colorOf(h.status), ink = inkOf(col), tint = tintOf(col), txt = badgeText(col);
     octx.save();
     octx.shadowColor='rgba(0,0,0,0.28)'; octx.shadowBlur=2.5*scale; octx.shadowOffsetY=1;
     octx.fillStyle = tint;
@@ -475,7 +494,7 @@ function drawOverlay(){
     octx.lineWidth = Math.max(1.4, 1.3*scale);
     octx.strokeStyle = ink;
     roundRect(octx, r.x, r.y, r.w, r.h, 2.5*scale); octx.stroke();
-    octx.fillStyle = ink;
+    octx.fillStyle = txt;
     octx.textBaseline = 'middle';
     if(r.lines.length===2){
       octx.font = '700 '+(r.fs1*scale)+'px Prompt, Sarabun, sans-serif';
@@ -622,7 +641,8 @@ function hexRgb(hex){ const n=parseInt(hex.slice(1),16); return PDFLib.rgb(((n>>
 function metaString(mapObj, rotVal){
   const clean = {};
   Object.entries(mapObj||mapping).forEach(([a,m])=>{ clean[a] = {x:+m.x.toFixed(1), y:+m.y.toFixed(1), page:m.page||1}; });
-  return MAGIC + JSON.stringify({village: villageName, mapping: clean, statuses, rot: (rotVal===undefined? rot : rotVal)});
+  return MAGIC + JSON.stringify({village: villageName, mapping: clean, statuses, rot: (rotVal===undefined? rot : rotVal),
+    style: {fs:FS(), padx:PX(), tint:+$('tintStr').value, full:$('fullAddr').checked}});
 }
 function dl(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); }
 function toast(el,msg,kind){ $(el).innerHTML='<div class="banner '+(kind||'info')+'">'+msg+'</div>'; setTimeout(()=>$(el).innerHTML='',8000); }
@@ -725,23 +745,23 @@ $('exportBtn').onclick = async ()=>{
       const m = outMap[h.addr]; if(!m) return;
       const pg = pages[(m.page||1)-1]; if(!pg) return;
       const colHex = colorOf(h.status);
-      const ink = hexRgb(inkOf(colHex)), tint = hexRgb(tintOf(colHex));
+      const ink = hexRgb(inkOf(colHex)), tint = hexRgb(tintOf(colHex)), txt = hexRgb(badgeText(colHex));
       let lines = chipLines(h);
       if(lines.some(l=>!/^[\x20-\x7E]+$/.test(l))) lines = [h.plot];   // Thai chars → plot only
       let tw;
       if(lines.length===2) tw = Math.max(font.widthOfTextAtSize(lines[0],fs1), font.widthOfTextAtSize(lines[1],fs));
       else tw = font.widthOfTextAtSize(lines[0],fs);
       const hh = lines.length===2 ? fs1+fs+PADY*2+1 : fs+PADY*2;
-      const w = Math.max(tw + PADX*2, hh);
+      const w = Math.max(tw + PX()*2, hh*1.4);
       const x0 = m.x-w/2, y0 = m.y-hh/2;
       pg.drawRectangle({ x:x0, y:y0, width:w, height:hh, color:tint, opacity:0.96,
-                         borderColor:ink, borderWidth:0.9 });
+                         borderColor:ink, borderWidth:1.1 });
       if(lines.length===2){
         const w1 = font.widthOfTextAtSize(lines[0],fs1), w2 = font.widthOfTextAtSize(lines[1],fs);
-        pg.drawText(lines[0], {x:m.x-w1/2, y:y0+hh-PADY-fs1*0.86, size:fs1, font, color:ink});
-        pg.drawText(lines[1], {x:m.x-w2/2, y:y0+PADY+fs*0.12, size:fs, font, color:ink});
+        pg.drawText(lines[0], {x:m.x-w1/2, y:y0+hh-PADY-fs1*0.86, size:fs1, font, color:txt});
+        pg.drawText(lines[1], {x:m.x-w2/2, y:y0+PADY+fs*0.12, size:fs, font, color:txt});
       } else {
-        pg.drawText(lines[0], {x:m.x-tw/2, y:m.y-fs*0.36, size:fs, font, color:ink});
+        pg.drawText(lines[0], {x:m.x-tw/2, y:m.y-fs*0.36, size:fs, font, color:txt});
       }
     });
     if($('addLegend').checked){
