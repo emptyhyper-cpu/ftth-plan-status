@@ -48,8 +48,8 @@
   .house:hover{background:#F4FAF5;}
   .house.sel{background:#E1F2E6; outline:2px solid var(--green); outline-offset:-2px;}
   .house .dot{width:12px; height:12px; border-radius:3px; border:1px solid rgba(0,0,0,.2); flex:none;}
-  .house .plot{font-weight:700; width:34px; flex:none;}
-  .house .addr{flex:1; color:var(--ink2);}
+  .house .plot{font-weight:700; flex:none; min-width:34px; max-width:90px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .house .addr{flex:1; color:var(--ink2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .house .pin{font-size:11px; flex:none;}
   .pin.ok{color:var(--green);} .pin.no{color:var(--warn);}
   .btn{display:inline-flex; align-items:center; justify-content:center; gap:6px; border:none; border-radius:8px; padding:9px 14px; font-family:inherit; font-size:13px; font-weight:600; cursor:pointer;}
@@ -157,7 +157,8 @@
   <div class="canvas-wrap">
     <div class="toolbar">
       <div class="grp">🔍 <input type="range" id="zoom" min="0.5" max="4" step="0.1" value="1.4"><span id="zoomVal">140%</span>
-        <button class="btn ghost small" id="fitBtn">พอดีจอ</button></div>
+        <button class="btn ghost small" id="fitBtn">พอดีจอ</button>
+        <button class="btn ghost small" id="rotBtn" title="หมุนแบบ 90°">↻ หมุน</button></div>
       <div class="grp">🔤 ขนาดเลขที่ <input type="range" id="fontSize" min="5" max="14" step="0.5" value="7"><span id="fsVal">7</span></div>
       <div class="grp" id="pageNav" style="display:none">หน้า <button class="btn ghost small" id="prevPg">◀</button><span id="pgLabel">1/1</span><button class="btn ghost small" id="nextPg">▶</button></div>
       <div class="grp" style="margin-left:auto">แตะพื้นที่ว่าง = วางเลขที่ · ลากพื้นหลัง = เลื่อนแบบ · ลากป้าย = ย้าย · ดับเบิลคลิกป้าย = ลบ</div>
@@ -188,6 +189,8 @@ let mapping = {};                      // addr -> {x,y,page,ai}  (x,y = center, 
 let pendingMap = null;                 // mapping loaded from PDF metadata before Excel arrives
 let selectedHouse = null, undoStack = [];
 let villageName = '';
+let rot = 0;            // extra clockwise rotation (0/90/180/270) applied by the user
+let curVP = null;       // current pdf.js viewport (handles all coord conversion incl. rotation)
 
 const DEFAULTS = [
   ['พร้อมติดตั้ง ONU', '#00A651'],
@@ -226,6 +229,7 @@ $('pdfInput').addEventListener('change', async e => {
       const data = JSON.parse(sub.slice(MAGIC.length));
       pendingMap = data.mapping || {};
       if(Array.isArray(data.statuses) && data.statuses.length){ statuses = data.statuses; if(houses.length){ renderStatusList(); renderSummary(); } }
+      if(typeof data.rot === 'number') rot = ((data.rot % 360)+360)%360;
       if(data.village && !villageName) villageName = data.village;
       if(houses.length) applyMapping(pendingMap);
       $('autoMsg').innerHTML = '<div class="banner ok">✅ ไฟล์แบบ Master — โหลดตำแหน่งบ้าน '+Object.keys(pendingMap).length+' หลัง + ชุดสีที่ตั้งไว้อัตโนมัติ</div>';
@@ -237,17 +241,20 @@ $('pdfInput').addEventListener('change', async e => {
 async function renderPage(fit){
   if(!pdfDoc) return;
   const page = await pdfDoc.getPage(pageNum);
-  const vp0 = page.getViewport({scale:1});
-  pageWpt = vp0.width; pageHpt = vp0.height;
-  if(fit){ scale = Math.max(0.5, (stage.clientWidth-18)/pageWpt); $('zoom').value = scale.toFixed(1); }
+  pageWpt = page.view[2]-page.view[0]; pageHpt = page.view[3]-page.view[1];
+  const R = ((page.rotate||0) + rot) % 360;
+  const vp1 = page.getViewport({scale:1, rotation:R});
+  if(fit){ scale = Math.max(0.5, (stage.clientWidth-18)/vp1.width); $('zoom').value = scale.toFixed(1); }
   $('zoomVal').textContent = Math.round(scale*100)+'%';
-  const vp = page.getViewport({scale});
+  const vp = page.getViewport({scale, rotation:R});
+  curVP = vp;
   canvas.width = vp.width; canvas.height = vp.height;
   overlay.width = vp.width; overlay.height = vp.height;
   await page.render({canvasContext: ctx, viewport: vp}).promise;
   $('pgLabel').textContent = pageNum + '/' + pageCount;
   drawOverlay();
 }
+$('rotBtn').onclick = ()=>{ rot = (rot+90)%360; renderPage(true); };
 $('zoom').addEventListener('input', e=>{ scale=+e.target.value; renderPage(); });
 $('fitBtn').onclick = ()=> renderPage(true);
 $('fontSize').addEventListener('input', ()=>{ $('fsVal').textContent = FS(); drawOverlay(); });
@@ -258,7 +265,17 @@ $('nextPg').onclick = ()=>{ if(pageNum<pageCount){pageNum++; renderPage();} };
 let rawRows = [], headerRow = [];
 $('xlsInput').addEventListener('change', async e => {
   const f = e.target.files[0]; if(!f) return;
-  const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
+  const buf = await f.arrayBuffer();
+  let wb;
+  if(/\.csv$/i.test(f.name)){
+    // read CSV as raw text: keeps 555/16, 5/16 as-is (no date conversion), handles Thai encoding
+    let text;
+    try{ text = new TextDecoder('utf-8', {fatal:true}).decode(buf); }
+    catch{ text = new TextDecoder('windows-874').decode(buf); }   // Thai CSV saved from Excel
+    wb = XLSX.read(text, {type:'string', raw:true});
+  } else {
+    wb = XLSX.read(buf, {type:'array'});
+  }
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
   let hIdx = rows.findIndex(r => r.some(c=>String(c).includes('บ้านเลขที่')) && r.some(c=>/status|สถานะ/i.test(String(c))));
@@ -288,6 +305,11 @@ function buildHouses(){
   const ca = +$('colAddr').value, cs = +$('colStatus').value;
   houses = rawRows.map(r=>({ addr:String(r[ca]).trim(), plot:plotOf(r[ca]), status:String(r[cs]).trim() }))
                   .filter(h=>h.addr);
+  // sanity check: address column that is really an Excel date-serial column
+  const serialish = houses.filter(h=>/^\d{5}(\.\d+)?$/.test(h.addr)).length;
+  $('autoMsg').innerHTML = (houses.length && serialish > houses.length*0.6)
+    ? '<div class="banner warn">⚠️ คอลัมน์บ้านเลขที่ที่เลือกดูเหมือนเป็น<b>วันที่</b> (เลข 5 หลักแบบ 35796.xx) — โปรดเปลี่ยนคอลัมน์ในช่อง "คอลัมน์บ้านเลขที่" ให้ถูกต้อง หรือใช้ไฟล์ .xlsx ต้นฉบับแทน CSV</div>'
+    : '';
   const present = [...new Set(houses.map(h=>h.status).filter(Boolean))];
   if(!statuses.length) statuses = DEFAULTS.map(([n,c])=>({name:n, color:c}));
   present.forEach(n=>{ if(!statuses.find(s=>s.name===n)) statuses.push({name:n, color:'#8C8C8C'}); });
@@ -368,15 +390,15 @@ function pushUndo(){ undoStack.push(JSON.stringify(mapping)); if(undoStack.lengt
 $('undoBtn').onclick = ()=>{ if(!undoStack.length) return; mapping = JSON.parse(undoStack.pop()); renderHouseList(); drawOverlay(); };
 $('clearMapBtn').onclick = ()=>{ if(confirm('ล้างตำแหน่งทั้งหมด?')){ pushUndo(); mapping={}; renderHouseList(); drawOverlay(); } };
 
-/* ---------- chip geometry (highlight label) ---------- */
-function chipRect(h){
-  // returns {x0,y0,w,h} in PDF points (y from bottom = center-based)
-  const m = mapping[h.addr]; if(!m) return null;
+/* ---------- chip geometry (highlight label, screen space) ---------- */
+function chipScreen(h){
+  const m = mapping[h.addr]; if(!m || m.page!==pageNum || !curVP) return null;
   const fs = FS();
-  octx.font = '700 '+(fs*4)+'px Prompt, Sarabun, sans-serif';   // measure big, scale down = stable
-  const tw = octx.measureText(h.addr).width/4;
-  const w = tw + PADX*2, hh = fs + PADY*2;
-  return {x0:m.x-w/2, y0:m.y-hh/2, w, h:hh};
+  const [sx, sy] = curVP.convertToViewportPoint(m.x, m.y);
+  octx.font = '700 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
+  const tw = octx.measureText(h.addr).width;
+  const w = tw + PADX*2*scale, hh = (fs + PADY*2)*scale;
+  return {x:sx-w/2, y:sy-hh/2, w, h:hh, cx:sx, cy:sy};
 }
 
 /* ---------- overlay draw ---------- */
@@ -384,23 +406,22 @@ function drawOverlay(){
   octx.clearRect(0,0,overlay.width,overlay.height);
   const fs = FS();
   houses.forEach(h=>{
-    const m = mapping[h.addr]; if(!m || m.page!==pageNum) return;
-    const r = chipRect(h);
-    const x = r.x0*scale, y = (pageHpt-r.y0-r.h)*scale, w = r.w*scale, hh = r.h*scale;
+    const r = chipScreen(h); if(!r) return;
+    const m = mapping[h.addr];
     const col = colorOf(h.status);
     octx.save();
     octx.shadowColor='rgba(0,0,0,0.35)'; octx.shadowBlur=3*scale; octx.shadowOffsetY=1;
     octx.fillStyle = col;
-    roundRect(octx, x, y, w, hh, 3*scale); octx.fill();
+    roundRect(octx, r.x, r.y, r.w, r.h, 3*scale); octx.fill();
     octx.restore();
-    if(m.ai){ octx.setLineDash([4,3]); octx.strokeStyle='#175CD3'; octx.lineWidth=1.5; roundRect(octx,x,y,w,hh,3*scale); octx.stroke(); octx.setLineDash([]); }
+    if(m.ai){ octx.setLineDash([4,3]); octx.strokeStyle='#175CD3'; octx.lineWidth=1.5; roundRect(octx,r.x,r.y,r.w,r.h,3*scale); octx.stroke(); octx.setLineDash([]); }
     octx.font = '700 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
     octx.fillStyle = textColorOf(col);
     octx.textBaseline = 'middle';
-    octx.fillText(h.addr, x+PADX*scale, y+hh/2+0.5);
+    octx.fillText(h.addr, r.x+PADX*scale, r.cy+0.5);
     if(selectedHouse===h.addr){
       octx.setLineDash([5,4]); octx.strokeStyle='#175CD3'; octx.lineWidth=2;
-      octx.strokeRect(x-4,y-4,w+8,hh+8); octx.setLineDash([]);
+      octx.strokeRect(r.x-4,r.y-4,r.w+8,r.h+8); octx.setLineDash([]);
     }
   });
 }
@@ -408,38 +429,39 @@ function roundRect(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x
 
 /* ---------- pointer: pan / place / drag chip ---------- */
 let ptr = null; // {mode:'pan'|'drag', ...}
-function toPdf(evt){
+function toScreen(evt){
   const r = overlay.getBoundingClientRect();
-  return {x:(evt.clientX-r.left)/scale, y:pageHpt-(evt.clientY-r.top)/scale};
+  return {x:evt.clientX-r.left, y:evt.clientY-r.top};
 }
-function chipAt(p){
+function chipAt(s){
   for(const h of houses){
-    const m = mapping[h.addr]; if(!m || m.page!==pageNum) continue;
-    const r = chipRect(h);
-    if(p.x>=r.x0-2 && p.x<=r.x0+r.w+2 && p.y>=r.y0-2 && p.y<=r.y0+r.h+2) return h.addr;
+    const r = chipScreen(h); if(!r) continue;
+    if(s.x>=r.x-3 && s.x<=r.x+r.w+3 && s.y>=r.y-3 && s.y<=r.y+r.h+3) return h.addr;
   }
   return null;
 }
 overlay.addEventListener('pointerdown', e=>{
-  if(!pdfDoc) return;
-  const p = toPdf(e);
-  const hit = houses.length ? chipAt(p) : null;
+  if(!pdfDoc || !curVP) return;
+  const s = toScreen(e);
+  const hit = houses.length ? chipAt(s) : null;
   if(hit){
     selectedHouse = hit;
-    ptr = {mode:'drag', addr:hit, dx:p.x-mapping[hit].x, dy:p.y-mapping[hit].y, moved:false};
+    const c = chipScreen(houses.find(h=>h.addr===hit));
+    ptr = {mode:'drag', addr:hit, ox:s.x-c.cx, oy:s.y-c.cy, moved:false};
     pushUndo();
     renderHouseList(); drawOverlay();
   } else {
-    ptr = {mode:'pan', sx:e.clientX, sy:e.clientY, sl:stage.scrollLeft, st:stage.scrollTop, moved:false, downAt:p};
+    ptr = {mode:'pan', sx:e.clientX, sy:e.clientY, sl:stage.scrollLeft, st:stage.scrollTop, moved:false, downAt:s};
   }
   overlay.setPointerCapture(e.pointerId);
 });
 overlay.addEventListener('pointermove', e=>{
   if(!ptr) return;
   if(ptr.mode==='drag'){
-    const p = toPdf(e);
+    const s = toScreen(e);
+    const [px,py] = curVP.convertToPdfPoint(s.x-ptr.ox, s.y-ptr.oy);
     const m = mapping[ptr.addr];
-    m.x = p.x-ptr.dx; m.y = p.y-ptr.dy; m.ai=false; ptr.moved=true;
+    m.x = px; m.y = py; m.ai=false; ptr.moved=true;
     drawOverlay();
   } else {
     const dx = e.clientX-ptr.sx, dy = e.clientY-ptr.sy;
@@ -451,13 +473,14 @@ overlay.addEventListener('pointerup', e=>{
   if(ptr && ptr.mode==='pan' && !ptr.moved && houses.length && selectedHouse){
     // quick tap on empty area = place selected house here
     pushUndo();
-    mapping[selectedHouse] = {x:ptr.downAt.x, y:ptr.downAt.y, page:pageNum};
+    const [px,py] = curVP.convertToPdfPoint(ptr.downAt.x, ptr.downAt.y);
+    mapping[selectedHouse] = {x:px, y:py, page:pageNum};
     selectNextUnmapped(); drawOverlay();
   }
   ptr = null;
 });
 overlay.addEventListener('dblclick', e=>{
-  const hit = chipAt(toPdf(e));
+  const hit = chipAt(toScreen(e));
   if(hit && confirm('ลบป้ายบ้าน '+hit+' ?')){ pushUndo(); delete mapping[hit]; renderHouseList(); drawOverlay(); }
 });
 document.addEventListener('keydown', e=>{
@@ -480,7 +503,8 @@ $('aiBtn').onclick = async ()=>{
   prog(0);
   try{
     const page = await pdfDoc.getPage(pageNum);
-    const OS = 3, vp = page.getViewport({scale:OS});
+    const OS = 3, R = ((page.rotate||0) + rot) % 360;
+    const vp = page.getViewport({scale:OS, rotation:R});   // OCR reads the upright view
     const c = document.createElement('canvas'); c.width = vp.width; c.height = vp.height;
     await page.render({canvasContext: c.getContext('2d'), viewport: vp}).promise;
 
@@ -499,8 +523,8 @@ $('aiBtn').onclick = async ()=>{
       if(w.confidence < 45) return;
       const bw=(w.bbox.x1-w.bbox.x0)/OS, bh=(w.bbox.y1-w.bbox.y0)/OS;
       if(bw>28 || bh>18) return;
-      const cx=(w.bbox.x0+w.bbox.x1)/2/OS, cyTop=(w.bbox.y0+w.bbox.y1)/2/OS;
-      (cand[t]=cand[t]||[]).push({x:cx, y:pageHpt-cyTop, conf:w.confidence});
+      const [px,py] = vp.convertToPdfPoint((w.bbox.x0+w.bbox.x1)/2, (w.bbox.y0+w.bbox.y1)/2);
+      (cand[t]=cand[t]||[]).push({x:px, y:py, conf:w.confidence});
     });
 
     pushUndo();
@@ -526,10 +550,10 @@ $('aiBtn').onclick = async ()=>{
 
 /* ---------- shared PDF helpers ---------- */
 function hexRgb(hex){ const n=parseInt(hex.slice(1),16); return PDFLib.rgb(((n>>16)&255)/255,((n>>8)&255)/255,(n&255)/255); }
-function metaString(){
+function metaString(mapObj, rotVal){
   const clean = {};
-  Object.entries(mapping).forEach(([a,m])=>{ clean[a] = {x:+m.x.toFixed(1), y:+m.y.toFixed(1), page:m.page||1}; });
-  return MAGIC + JSON.stringify({village: villageName, mapping: clean, statuses});
+  Object.entries(mapObj||mapping).forEach(([a,m])=>{ clean[a] = {x:+m.x.toFixed(1), y:+m.y.toFixed(1), page:m.page||1}; });
+  return MAGIC + JSON.stringify({village: villageName, mapping: clean, statuses, rot: (rotVal===undefined? rot : rotVal)});
 }
 function dl(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),4000); }
 function toast(el,msg,kind){ $(el).innerHTML='<div class="banner '+(kind||'info')+'">'+msg+'</div>'; setTimeout(()=>$(el).innerHTML='',8000); }
@@ -582,25 +606,54 @@ $('exportBtn').onclick = async ()=>{
   if(missing && !confirm('มีบ้าน '+missing+' หลังที่ยังไม่ได้วางตำแหน่ง จะไม่แสดงใน PDF — ดำเนินการต่อ?')) return;
   $('exportBtn').disabled=true;
   try{
-    const doc = await PDFLib.PDFDocument.load(pdfBytes);
-    const pages = doc.getPages();
-    if($('stripOld').checked){
-      pages.forEach(pg=>{
-        const annots = pg.node.Annots(); if(!annots) return;
-        const keep = [];
-        for(let i=0;i<annots.size();i++){
-          const ref = annots.get(i);
-          const d = doc.context.lookup(ref);
-          const sub = d && d.get ? d.get(PDFLib.PDFName.of('Subtype')) : null;
-          if(!sub || sub.toString() !== '/Square') keep.push(ref);
-        }
-        pg.node.set(PDFLib.PDFName.of('Annots'), doc.context.obj(keep));
+    const src = await PDFLib.PDFDocument.load(pdfBytes);
+    const srcPages = src.getPages();
+    const totalR = (((srcPages[0].getRotation().angle||0) + rot) % 360 + 360) % 360;
+    let doc, pages, outMap;
+
+    if(totalR === 0){
+      doc = src; pages = srcPages; outMap = mapping;
+      if($('stripOld').checked){
+        pages.forEach(pg=>{
+          const annots = pg.node.Annots(); if(!annots) return;
+          const keep = [];
+          for(let i=0;i<annots.size();i++){
+            const ref = annots.get(i);
+            const d = doc.context.lookup(ref);
+            const sub = d && d.get ? d.get(PDFLib.PDFName.of('Subtype')) : null;
+            if(!sub || sub.toString() !== '/Square') keep.push(ref);
+          }
+          pg.node.set(PDFLib.PDFName.of('Annots'), doc.context.obj(keep));
+        });
+      }
+    } else {
+      // bake rotation: rebuild each page upright (old annotations are flattened away)
+      doc = await PDFLib.PDFDocument.create();
+      pages = [];
+      const dims = [];
+      for(const sp of srcPages){
+        const W = sp.getWidth(), H = sp.getHeight();
+        const emb = await doc.embedPage(sp);
+        let pg;
+        if(totalR===90){       pg = doc.addPage([H, W]); pg.drawPage(emb, {x:0, y:W, rotate:PDFLib.degrees(-90)}); }
+        else if(totalR===180){ pg = doc.addPage([W, H]); pg.drawPage(emb, {x:W, y:H, rotate:PDFLib.degrees(180)}); }
+        else {                 pg = doc.addPage([H, W]); pg.drawPage(emb, {x:H, y:0, rotate:PDFLib.degrees(90)}); }
+        pages.push(pg); dims.push([W, H]);
+      }
+      // transform chip coordinates into the rotated page space
+      const xf = (x, y, W, H) => totalR===90 ? [y, W-x] : totalR===180 ? [W-x, H-y] : [H-y, x];
+      outMap = {};
+      Object.entries(mapping).forEach(([a,m])=>{
+        const [W, H] = dims[(m.page||1)-1] || dims[0];
+        const [nx, ny] = xf(m.x, m.y, W, H);
+        outMap[a] = {x:nx, y:ny, page:m.page||1};
       });
     }
+
     const font = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
     const fs = FS();
     houses.forEach(h=>{
-      const m = mapping[h.addr]; if(!m) return;
+      const m = outMap[h.addr]; if(!m) return;
       const pg = pages[(m.page||1)-1]; if(!pg) return;
       const colHex = colorOf(h.status), col = hexRgb(colHex);
       const ascii = /^[\x20-\x7E]+$/.test(h.addr);
@@ -620,7 +673,8 @@ $('exportBtn').onclick = async ()=>{
       const pos = $('legendPos').value;
       pg.drawImage(img,{x: pos.includes('r')?PW-w-M:M, y: pos.includes('t')?PH-h-M:M, width:w, height:h});
     }
-    doc.setSubject(metaString());   // report also carries positions
+    // report carries positions in ITS OWN page space (rot already baked → 0)
+    doc.setSubject(metaString(outMap, totalR===0 ? rot : 0));
     const out = await doc.save();
     const d = new Date(), ds = d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
     dl(new Blob([out],{type:'application/pdf'}), 'Progress_'+(villageName||'FTTH').replace(/\s+/g,'_').slice(0,50)+'_'+ds+'.pdf');
