@@ -159,7 +159,8 @@
       <div class="grp">🔍 <input type="range" id="zoom" min="0.5" max="4" step="0.1" value="1.4"><span id="zoomVal">140%</span>
         <button class="btn ghost small" id="fitBtn">พอดีจอ</button>
         <button class="btn ghost small" id="rotBtn" title="หมุนแบบ 90°">↻ หมุน</button></div>
-      <div class="grp">🔤 ขนาดเลขที่ <input type="range" id="fontSize" min="5" max="14" step="0.5" value="7"><span id="fsVal">7</span></div>
+      <div class="grp">🔤 ขนาดเลขที่ <input type="range" id="fontSize" min="5" max="14" step="0.5" value="7"><span id="fsVal">7</span>
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fullAddr"> เลขเต็ม (555/16)</label></div>
       <div class="grp" id="pageNav" style="display:none">หน้า <button class="btn ghost small" id="prevPg">◀</button><span id="pgLabel">1/1</span><button class="btn ghost small" id="nextPg">▶</button></div>
       <div class="grp" style="margin-left:auto">แตะพื้นที่ว่าง = วางเลขที่ · ลากพื้นหลัง = เลื่อนแบบ · ลากป้าย = ย้าย · ดับเบิลคลิกป้าย = ลบ</div>
     </div>
@@ -193,15 +194,18 @@ let rot = 0;            // extra clockwise rotation (0/90/180/270) applied by th
 let curVP = null;       // current pdf.js viewport (handles all coord conversion incl. rotation)
 
 const DEFAULTS = [
-  ['พร้อมติดตั้ง ONU', '#00A651'],
-  ['บ้านยังไม่พร้อมร้อยสาย', '#7F7F7F'],
-  ['ท่อ Main ตัน', '#FF00FF'],
-  ['บ่อพักไม่พร้อมร้อยสาย', '#FF0000'],
-  ['ท่อจากบ่อพักไปตู้ Post ตัน', '#7F6000'],
-  ['ท่อภายในบ้านตัน', '#FFFF00'],
-  ['อยู่ระหว่างการเดินสาย Main Fiber', '#7030A0'],
-  ['อยู่ระหว่างการเดินสาย Drop Fiber เข้าบ้าน', '#0070C0'],
-  ['อยู่ระหว่างการ Terminate ปล่อยสัญญาณ', '#00B0F0'],
+  ['พร้อมติดตั้ง ONU', '#C6E0B4'],
+  ['บ้านยังไม่พร้อมร้อยสาย', '#A6A6A6'],
+  ['ท่อ Main ตัน', '#EBD1EB'],
+  ['บ่อพักไม่พร้อมร้อยสาย', '#FF6D6D'],
+  ['ท่อภายในบ่อพักไปตู้ Post ตัน', '#A2C400'],
+  ['ท่อภายในบ้านตัน', '#FFFF99'],
+  ['อยู่ระหว่างการเดินสาย Main Fiber', '#C05CD0'],
+  ['อยู่ระหว่างการเดินสาย Drop Fiber เข้าบ้าน', '#41B6E6'],
+  ['อยู่ระหว่างการ Terminate ปล่อยสัญญาณ', '#C4E4F6'],
+  ['สายที่โครงการร้อยไว้ขาด', '#FFB74D'],
+  ['โครงการไม่ได้ร้อยสาย', '#C5C6EF'],
+  ['ลูกค้าไม่สนใจ ไม่ให้ร้อยสาย', '#FF0000'],
 ];
 
 const $ = id => document.getElementById(id);
@@ -238,6 +242,7 @@ $('pdfInput').addEventListener('change', async e => {
   await renderPage(true);
 });
 
+let renderTask = null;
 async function renderPage(fit){
   if(!pdfDoc) return;
   const page = await pdfDoc.getPage(pageNum);
@@ -248,13 +253,24 @@ async function renderPage(fit){
   $('zoomVal').textContent = Math.round(scale*100)+'%';
   const vp = page.getViewport({scale, rotation:R});
   curVP = vp;
-  canvas.width = vp.width; canvas.height = vp.height;
-  overlay.width = vp.width; overlay.height = vp.height;
-  await page.render({canvasContext: ctx, viewport: vp}).promise;
+  // render at device resolution so mobile/retina screens stay sharp
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  canvas.width = Math.floor(vp.width*dpr);  canvas.height = Math.floor(vp.height*dpr);
+  canvas.style.width = vp.width+'px';       canvas.style.height = vp.height+'px';
+  overlay.width = Math.floor(vp.width*dpr); overlay.height = Math.floor(vp.height*dpr);
+  overlay.style.width = vp.width+'px';      overlay.style.height = vp.height+'px';
+  octx.setTransform(dpr,0,0,dpr,0,0);
+  // cancel any in-flight render (overlapping renders corrupt the canvas)
+  if(renderTask){ try{ renderTask.cancel(); }catch(e){} }
+  renderTask = page.render({canvasContext: ctx, viewport: vp, transform:[dpr,0,0,dpr,0,0]});
+  try{ await renderTask.promise; }
+  catch(err){ if(err && err.name === 'RenderingCancelledException') return; throw err; }
+  renderTask = null;
   $('pgLabel').textContent = pageNum + '/' + pageCount;
   drawOverlay();
 }
 $('rotBtn').onclick = ()=>{ rot = (rot+90)%360; renderPage(true); };
+$('fullAddr').addEventListener('change', drawOverlay);
 $('zoom').addEventListener('input', e=>{ scale=+e.target.value; renderPage(); });
 $('fitBtn').onclick = ()=> renderPage(true);
 $('fontSize').addEventListener('input', ()=>{ $('fsVal').textContent = FS(); drawOverlay(); });
@@ -390,38 +406,53 @@ function pushUndo(){ undoStack.push(JSON.stringify(mapping)); if(undoStack.lengt
 $('undoBtn').onclick = ()=>{ if(!undoStack.length) return; mapping = JSON.parse(undoStack.pop()); renderHouseList(); drawOverlay(); };
 $('clearMapBtn').onclick = ()=>{ if(confirm('ล้างตำแหน่งทั้งหมด?')){ pushUndo(); mapping={}; renderHouseList(); drawOverlay(); } };
 
-/* ---------- chip geometry (highlight label, screen space) ---------- */
+/* ---------- chip geometry (AIS pill: status dot + house number, screen space) ---------- */
+const lblOf = h => ($('fullAddr') && $('fullAddr').checked) ? h.addr : h.plot;
 function chipScreen(h){
   const m = mapping[h.addr]; if(!m || m.page!==pageNum || !curVP) return null;
-  const fs = FS();
+  const fs = FS(), lbl = lblOf(h);
   const [sx, sy] = curVP.convertToViewportPoint(m.x, m.y);
   octx.font = '700 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
-  const tw = octx.measureText(h.addr).width;
-  const w = tw + PADX*2*scale, hh = (fs + PADY*2)*scale;
-  return {x:sx-w/2, y:sy-hh/2, w, h:hh, cx:sx, cy:sy};
+  const tw = octx.measureText(lbl).width;
+  const d = fs*0.72*scale;                       // status dot diameter
+  const w = PADX*scale + d + 2*scale + tw + PADX*scale;
+  const hh = (fs + PADY*2)*scale;
+  return {x:sx-w/2, y:sy-hh/2, w, h:hh, cx:sx, cy:sy, d, lbl};
 }
 
 /* ---------- overlay draw ---------- */
 function drawOverlay(){
+  octx.save(); octx.setTransform(1,0,0,1,0,0);
   octx.clearRect(0,0,overlay.width,overlay.height);
+  octx.restore();
   const fs = FS();
   houses.forEach(h=>{
     const r = chipScreen(h); if(!r) return;
     const m = mapping[h.addr];
     const col = colorOf(h.status);
+    // white pill
     octx.save();
-    octx.shadowColor='rgba(0,0,0,0.35)'; octx.shadowBlur=3*scale; octx.shadowOffsetY=1;
-    octx.fillStyle = col;
-    roundRect(octx, r.x, r.y, r.w, r.h, 3*scale); octx.fill();
+    octx.shadowColor='rgba(0,0,0,0.3)'; octx.shadowBlur=2.5*scale; octx.shadowOffsetY=1;
+    octx.fillStyle = 'rgba(255,255,255,0.96)';
+    roundRect(octx, r.x, r.y, r.w, r.h, r.h/2); octx.fill();
     octx.restore();
-    if(m.ai){ octx.setLineDash([4,3]); octx.strokeStyle='#175CD3'; octx.lineWidth=1.5; roundRect(octx,r.x,r.y,r.w,r.h,3*scale); octx.stroke(); octx.setLineDash([]); }
+    octx.lineWidth = Math.max(1.2, 1.1*scale);
+    octx.strokeStyle = col;
+    roundRect(octx, r.x, r.y, r.w, r.h, r.h/2); octx.stroke();
+    // status dot
+    octx.beginPath();
+    octx.arc(r.x + PADX*scale + r.d/2, r.cy, r.d/2, 0, Math.PI*2);
+    octx.fillStyle = col; octx.fill();
+    octx.lineWidth = 0.8; octx.strokeStyle = 'rgba(0,0,0,0.35)'; octx.stroke();
+    // house number
     octx.font = '700 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
-    octx.fillStyle = textColorOf(col);
+    octx.fillStyle = '#111827';
     octx.textBaseline = 'middle';
-    octx.fillText(h.addr, r.x+PADX*scale, r.cy+0.5);
+    octx.fillText(r.lbl, r.x + PADX*scale + r.d + 2*scale, r.cy+0.5);
+    if(m.ai){ octx.setLineDash([4,3]); octx.strokeStyle='#175CD3'; octx.lineWidth=1.5; roundRect(octx,r.x-2,r.y-2,r.w+4,r.h+4,(r.h+4)/2); octx.stroke(); octx.setLineDash([]); }
     if(selectedHouse===h.addr){
       octx.setLineDash([5,4]); octx.strokeStyle='#175CD3'; octx.lineWidth=2;
-      octx.strokeRect(r.x-4,r.y-4,r.w+8,r.h+8); octx.setLineDash([]);
+      octx.strokeRect(r.x-5,r.y-5,r.w+10,r.h+10); octx.setLineDash([]);
     }
   });
 }
@@ -656,14 +687,20 @@ $('exportBtn').onclick = async ()=>{
       const m = outMap[h.addr]; if(!m) return;
       const pg = pages[(m.page||1)-1]; if(!pg) return;
       const colHex = colorOf(h.status), col = hexRgb(colHex);
-      const ascii = /^[\x20-\x7E]+$/.test(h.addr);
-      const lbl = ascii ? h.addr : h.plot;
+      const lbl0 = ($('fullAddr') && $('fullAddr').checked) ? h.addr : h.plot;
+      const lbl = /^[\x20-\x7E]+$/.test(lbl0) ? lbl0 : h.plot;
       const tw = font.widthOfTextAtSize(lbl, fs);
-      const w = tw + PADX*2, hh = fs + PADY*2;
-      pg.drawRectangle({ x:m.x-w/2, y:m.y-hh/2, width:w, height:hh, color:col,
-                         borderColor:PDFLib.rgb(0,0,0), borderWidth:0.4 });
-      const tc = textColorOf(colHex)==='#000000' ? PDFLib.rgb(0,0,0) : PDFLib.rgb(1,1,1);
-      pg.drawText(lbl, { x:m.x-tw/2, y:m.y-fs*0.36, size:fs, font, color:tc });
+      const d = fs*0.72;
+      const w = PADX + d + 2 + tw + PADX, hh = fs + PADY*2;
+      const x0 = m.x-w/2, y0 = m.y-hh/2;
+      // white pill + status-colored border
+      pg.drawRectangle({ x:x0, y:y0, width:w, height:hh, color:PDFLib.rgb(1,1,1), opacity:0.96,
+                         borderColor:col, borderWidth:0.9 });
+      // status dot
+      pg.drawEllipse({ x:x0+PADX+d/2, y:m.y, xScale:d/2, yScale:d/2, color:col,
+                       borderColor:PDFLib.rgb(0,0,0), borderWidth:0.25, borderOpacity:0.4 });
+      // house number (dark, always readable)
+      pg.drawText(lbl, { x:x0+PADX+d+2, y:m.y-fs*0.36, size:fs, font, color:PDFLib.rgb(0.07,0.09,0.15) });
     });
     if($('addLegend').checked){
       const {png,w,h} = await legendPng();
