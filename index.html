@@ -160,9 +160,14 @@
         <button class="btn ghost small" id="fitBtn">พอดีจอ</button>
         <button class="btn ghost small" id="rotBtn" title="หมุนแบบ 90°">↻ หมุน</button></div>
       <div class="grp">🔤 ขนาดเลขที่ <input type="range" id="fontSize" min="5" max="14" step="0.5" value="7"><span id="fsVal">7</span>
-        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fullAddr"> เลขเต็ม (555/16)</label></div>
+        <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="fullAddr" checked> เลขเต็ม (555/16)</label></div>
       <div class="grp" id="pageNav" style="display:none">หน้า <button class="btn ghost small" id="prevPg">◀</button><span id="pgLabel">1/1</span><button class="btn ghost small" id="nextPg">▶</button></div>
-      <div class="grp" style="margin-left:auto">แตะพื้นที่ว่าง = วางเลขที่ · ลากพื้นหลัง = เลื่อนแบบ · ลากป้าย = ย้าย · ดับเบิลคลิกป้าย = ลบ</div>
+      <div class="grp" style="margin-left:auto">
+        <button class="btn primary small" id="exportBtn2">⬇️ Export PDF</button>
+      </div>
+    </div>
+    <div class="toolbar" style="padding:4px 12px; font-size:11.5px; justify-content:flex-end; border-top:none">
+      แตะพื้นที่ว่าง = วางเลขที่ · ลากพื้นหลัง = เลื่อนแบบ · ลากป้าย = ย้าย · ดับเบิลคลิกป้าย = ลบ
     </div>
     <div id="stage">
       <div id="emptyMsg">
@@ -269,6 +274,7 @@ async function renderPage(fit){
   $('pgLabel').textContent = pageNum + '/' + pageCount;
   drawOverlay();
 }
+$('exportBtn2').onclick = ()=> $('exportBtn').click();
 $('rotBtn').onclick = ()=>{ rot = (rot+90)%360; renderPage(true); };
 $('fullAddr').addEventListener('change', drawOverlay);
 $('zoom').addEventListener('input', e=>{ scale=+e.target.value; renderPage(); });
@@ -348,6 +354,29 @@ function applyMapping(raw){
 
 function colorOf(st){ const s=statuses.find(x=>x.name===st); return s?s.color:'#8C8C8C'; }
 function textColorOf(hex){ const n=parseInt(hex.slice(1),16); const L=0.299*((n>>16)&255)+0.587*((n>>8)&255)+0.114*(n&255); return L>150 ? '#000000' : '#FFFFFF'; }
+function rgbOf(hex){ const n=parseInt(hex.slice(1),16); return [(n>>16)&255,(n>>8)&255,n&255]; }
+function toHex(r,g,b){ return '#'+[r,g,b].map(v=>Math.max(0,Math.min(255,Math.round(v))).toString(16).padStart(2,'0')).join(''); }
+// status color darkened until readable (keeps the same hue = same status color, just stronger)
+function inkOf(hex){
+  let [r,g,b] = rgbOf(hex);
+  let L = 0.299*r+0.587*g+0.114*b;
+  while(L > 145){ r*=0.72; g*=0.72; b*=0.72; L = 0.299*r+0.587*g+0.114*b; }
+  return toHex(r,g,b);
+}
+// very light tint of status color for badge background
+function tintOf(hex, f=0.85){
+  const [r,g,b] = rgbOf(hex);
+  return toHex(r+(255-r)*f, g+(255-g)*f, b+(255-b)*f);
+}
+// badge label lines: full address splits into ["98/","16"] for a squarer badge
+function chipLines(h){
+  const full = $('fullAddr') && $('fullAddr').checked;
+  if(full && h.addr.includes('/')){
+    const i = h.addr.lastIndexOf('/');
+    return [h.addr.slice(0,i+1), h.addr.slice(i+1)];
+  }
+  return [full ? h.addr : h.plot];
+}
 
 /* ---------- side lists ---------- */
 function renderStatusList(){
@@ -406,18 +435,25 @@ function pushUndo(){ undoStack.push(JSON.stringify(mapping)); if(undoStack.lengt
 $('undoBtn').onclick = ()=>{ if(!undoStack.length) return; mapping = JSON.parse(undoStack.pop()); renderHouseList(); drawOverlay(); };
 $('clearMapBtn').onclick = ()=>{ if(confirm('ล้างตำแหน่งทั้งหมด?')){ pushUndo(); mapping={}; renderHouseList(); drawOverlay(); } };
 
-/* ---------- chip geometry (AIS pill: status dot + house number, screen space) ---------- */
-const lblOf = h => ($('fullAddr') && $('fullAddr').checked) ? h.addr : h.plot;
+/* ---------- chip geometry (square badge: status-colored number, screen space) ---------- */
 function chipScreen(h){
   const m = mapping[h.addr]; if(!m || m.page!==pageNum || !curVP) return null;
-  const fs = FS(), lbl = lblOf(h);
+  const fs = FS(), lines = chipLines(h);
   const [sx, sy] = curVP.convertToViewportPoint(m.x, m.y);
-  octx.font = '700 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
-  const tw = octx.measureText(lbl).width;
-  const d = fs*0.72*scale;                       // status dot diameter
-  const w = PADX*scale + d + 2*scale + tw + PADX*scale;
-  const hh = (fs + PADY*2)*scale;
-  return {x:sx-w/2, y:sy-hh/2, w, h:hh, cx:sx, cy:sy, d, lbl};
+  const fs1 = fs*0.78;  // top line (prefix) smaller
+  let tw = 0;
+  if(lines.length===2){
+    octx.font = '700 '+(fs1*scale)+'px Prompt, Sarabun, sans-serif';
+    tw = octx.measureText(lines[0]).width;
+    octx.font = '800 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
+    tw = Math.max(tw, octx.measureText(lines[1]).width);
+  } else {
+    octx.font = '800 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
+    tw = octx.measureText(lines[0]).width;
+  }
+  const hh = (lines.length===2 ? fs1+fs+PADY*2+1 : fs+PADY*2)*scale;
+  const w  = Math.max(tw + PADX*2*scale, hh);   // at least square
+  return {x:sx-w/2, y:sy-hh/2, w, h:hh, cx:sx, cy:sy, lines, fs1};
 }
 
 /* ---------- overlay draw ---------- */
@@ -426,35 +462,37 @@ function drawOverlay(){
   octx.clearRect(0,0,overlay.width,overlay.height);
   octx.restore();
   const fs = FS();
+  octx.textAlign = 'center';
   houses.forEach(h=>{
     const r = chipScreen(h); if(!r) return;
     const m = mapping[h.addr];
-    const col = colorOf(h.status);
-    // white pill
+    const col = colorOf(h.status), ink = inkOf(col), tint = tintOf(col);
     octx.save();
-    octx.shadowColor='rgba(0,0,0,0.3)'; octx.shadowBlur=2.5*scale; octx.shadowOffsetY=1;
-    octx.fillStyle = 'rgba(255,255,255,0.96)';
-    roundRect(octx, r.x, r.y, r.w, r.h, r.h/2); octx.fill();
+    octx.shadowColor='rgba(0,0,0,0.28)'; octx.shadowBlur=2.5*scale; octx.shadowOffsetY=1;
+    octx.fillStyle = tint;
+    roundRect(octx, r.x, r.y, r.w, r.h, 2.5*scale); octx.fill();
     octx.restore();
-    octx.lineWidth = Math.max(1.2, 1.1*scale);
-    octx.strokeStyle = col;
-    roundRect(octx, r.x, r.y, r.w, r.h, r.h/2); octx.stroke();
-    // status dot
-    octx.beginPath();
-    octx.arc(r.x + PADX*scale + r.d/2, r.cy, r.d/2, 0, Math.PI*2);
-    octx.fillStyle = col; octx.fill();
-    octx.lineWidth = 0.8; octx.strokeStyle = 'rgba(0,0,0,0.35)'; octx.stroke();
-    // house number
-    octx.font = '700 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
-    octx.fillStyle = '#111827';
+    octx.lineWidth = Math.max(1.4, 1.3*scale);
+    octx.strokeStyle = ink;
+    roundRect(octx, r.x, r.y, r.w, r.h, 2.5*scale); octx.stroke();
+    octx.fillStyle = ink;
     octx.textBaseline = 'middle';
-    octx.fillText(r.lbl, r.x + PADX*scale + r.d + 2*scale, r.cy+0.5);
-    if(m.ai){ octx.setLineDash([4,3]); octx.strokeStyle='#175CD3'; octx.lineWidth=1.5; roundRect(octx,r.x-2,r.y-2,r.w+4,r.h+4,(r.h+4)/2); octx.stroke(); octx.setLineDash([]); }
+    if(r.lines.length===2){
+      octx.font = '700 '+(r.fs1*scale)+'px Prompt, Sarabun, sans-serif';
+      octx.fillText(r.lines[0], r.cx, r.y + (PADY + r.fs1/2)*scale);
+      octx.font = '800 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
+      octx.fillText(r.lines[1], r.cx, r.y + (PADY + r.fs1 + 1 + fs/2)*scale);
+    } else {
+      octx.font = '800 '+(fs*scale)+'px Prompt, Sarabun, sans-serif';
+      octx.fillText(r.lines[0], r.cx, r.cy+0.5);
+    }
+    if(m.ai){ octx.setLineDash([4,3]); octx.strokeStyle='#175CD3'; octx.lineWidth=1.5; roundRect(octx,r.x-2,r.y-2,r.w+4,r.h+4,3*scale); octx.stroke(); octx.setLineDash([]); }
     if(selectedHouse===h.addr){
       octx.setLineDash([5,4]); octx.strokeStyle='#175CD3'; octx.lineWidth=2;
       octx.strokeRect(r.x-5,r.y-5,r.w+10,r.h+10); octx.setLineDash([]);
     }
   });
+  octx.textAlign = 'start';
 }
 function roundRect(g,x,y,w,h,r){ g.beginPath(); g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r); g.arcTo(x,y+h,x,y,r); g.arcTo(x,y,x+w,y,r); g.closePath(); }
 
@@ -682,25 +720,29 @@ $('exportBtn').onclick = async ()=>{
     }
 
     const font = await doc.embedFont(PDFLib.StandardFonts.HelveticaBold);
-    const fs = FS();
+    const fs = FS(), fs1 = fs*0.78;
     houses.forEach(h=>{
       const m = outMap[h.addr]; if(!m) return;
       const pg = pages[(m.page||1)-1]; if(!pg) return;
-      const colHex = colorOf(h.status), col = hexRgb(colHex);
-      const lbl0 = ($('fullAddr') && $('fullAddr').checked) ? h.addr : h.plot;
-      const lbl = /^[\x20-\x7E]+$/.test(lbl0) ? lbl0 : h.plot;
-      const tw = font.widthOfTextAtSize(lbl, fs);
-      const d = fs*0.72;
-      const w = PADX + d + 2 + tw + PADX, hh = fs + PADY*2;
+      const colHex = colorOf(h.status);
+      const ink = hexRgb(inkOf(colHex)), tint = hexRgb(tintOf(colHex));
+      let lines = chipLines(h);
+      if(lines.some(l=>!/^[\x20-\x7E]+$/.test(l))) lines = [h.plot];   // Thai chars → plot only
+      let tw;
+      if(lines.length===2) tw = Math.max(font.widthOfTextAtSize(lines[0],fs1), font.widthOfTextAtSize(lines[1],fs));
+      else tw = font.widthOfTextAtSize(lines[0],fs);
+      const hh = lines.length===2 ? fs1+fs+PADY*2+1 : fs+PADY*2;
+      const w = Math.max(tw + PADX*2, hh);
       const x0 = m.x-w/2, y0 = m.y-hh/2;
-      // white pill + status-colored border
-      pg.drawRectangle({ x:x0, y:y0, width:w, height:hh, color:PDFLib.rgb(1,1,1), opacity:0.96,
-                         borderColor:col, borderWidth:0.9 });
-      // status dot
-      pg.drawEllipse({ x:x0+PADX+d/2, y:m.y, xScale:d/2, yScale:d/2, color:col,
-                       borderColor:PDFLib.rgb(0,0,0), borderWidth:0.25, borderOpacity:0.4 });
-      // house number (dark, always readable)
-      pg.drawText(lbl, { x:x0+PADX+d+2, y:m.y-fs*0.36, size:fs, font, color:PDFLib.rgb(0.07,0.09,0.15) });
+      pg.drawRectangle({ x:x0, y:y0, width:w, height:hh, color:tint, opacity:0.96,
+                         borderColor:ink, borderWidth:0.9 });
+      if(lines.length===2){
+        const w1 = font.widthOfTextAtSize(lines[0],fs1), w2 = font.widthOfTextAtSize(lines[1],fs);
+        pg.drawText(lines[0], {x:m.x-w1/2, y:y0+hh-PADY-fs1*0.86, size:fs1, font, color:ink});
+        pg.drawText(lines[1], {x:m.x-w2/2, y:y0+PADY+fs*0.12, size:fs, font, color:ink});
+      } else {
+        pg.drawText(lines[0], {x:m.x-tw/2, y:m.y-fs*0.36, size:fs, font, color:ink});
+      }
     });
     if($('addLegend').checked){
       const {png,w,h} = await legendPng();
