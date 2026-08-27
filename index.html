@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Excel → Google AI → Excel</title>
+<style>
+  :root{--paper:#E8ECEE;--surface:#fff;--ink:#12191C;--mute:#63737A;--line:#C9D3D7;
+        --deep:#123B44;--ok:#7EBB2A;--warn:#FDF6E7;--err:#C4452F;--soft:#F2F6F7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);
+       font-family:'Noto Sans Thai','Sarabun','Leelawadee UI',system-ui,sans-serif}
+  .wrap{max-width:1180px;margin:0 auto;padding:26px 18px 60px}
+  header{border-bottom:2px solid var(--deep);padding-bottom:13px;margin-bottom:20px}
+  .eyebrow{font-size:11px;letter-spacing:2.4px;color:var(--mute);font-weight:700}
+  h1{margin:6px 0 4px;font-size:26px;font-weight:800}
+  .lede{margin:0;color:var(--mute);font-size:14px}
+  .step{background:var(--surface);border:1px solid var(--line);padding:18px;margin-bottom:14px}
+  .h{font-size:15px;font-weight:700;display:flex;align-items:center;margin-bottom:6px}
+  .no{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;
+      background:var(--deep);color:#fff;border-radius:50%;font-size:12px;font-weight:700;margin-right:9px}
+  .sub{font-size:12.5px;color:var(--mute);margin:0 0 12px 31px;line-height:1.6}
+  textarea{width:100%;border:1px solid var(--line);padding:11px;font-size:13px;border-radius:2px;
+           font-family:inherit;line-height:1.6;resize:vertical;background:var(--surface)}
+  .btn{border:1px solid var(--deep);background:var(--deep);color:#fff;padding:10px 18px;
+       border-radius:2px;font-size:14px;cursor:pointer;font-weight:600;font-family:inherit}
+  .btn[disabled]{opacity:.35;cursor:not-allowed}
+  .btn.ghost{background:transparent;color:var(--deep)}
+  .btn.sm{padding:6px 12px;font-size:13px}
+  .chip{border:1px solid var(--line);background:var(--surface);padding:5px 11px;border-radius:2px;
+        font-size:12.5px;cursor:pointer;font-family:inherit}
+  .chip.on{background:var(--deep);color:#fff;border-color:var(--deep)}
+  .num{font-variant-numeric:tabular-nums;font-family:ui-monospace,Menlo,monospace}
+  table{width:100%;border-collapse:collapse;min-width:900px}
+  th{text-align:left;font-size:10.5px;letter-spacing:.7px;color:var(--mute);font-weight:700;
+     padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:3px 5px;border-bottom:1px solid #EDF1F2;font-size:13px}
+  td input{width:100%;border:1px solid transparent;padding:5px 6px;font-size:13px;
+           background:transparent;font-family:inherit;border-radius:2px}
+  td input:focus{border-color:var(--deep);background:#fff;outline:none}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .miss{background:var(--warn)}
+  .err{color:var(--err);font-size:14px;margin-top:10px}
+  .scroll{overflow-x:auto}
+  .foot{padding:0 16px 16px;font-size:12.5px;color:var(--mute);line-height:1.7}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">AIS FIBRE · FTTH</div>
+    <h1>Excel → Google AI → Excel</h1>
+    <p class="lede">จัดผลจาก Google ให้เรียงตรงกับลำดับใน Excel ทำงานในเครื่องล้วน ไม่ต่อเน็ต ไม่มีค่าใช้จ่าย</p>
+  </header>
+
+  <div class="step">
+    <div class="h"><span class="no">1</span>วางชื่อโครงการจาก Excel</div>
+    <p class="sub">เลือกคอลัมน์ A ทีละ 30–50 แถว กด Ctrl+C แล้ววางที่นี่ — ลำดับนี้คือลำดับที่ผลลัพธ์จะเรียงกลับไป</p>
+    <textarea id="names" rows="5" placeholder="หมู่บ้านลัดดาวิลล์ 1,2 บางบัวทอง (YVWTM)&#10;18หมู่บ้านมหาลาภ (18MHR)&#10;…"></textarea>
+    <div class="row" style="margin-top:10px">
+      <span style="font-size:13px"><b class="num" id="ncount">0</b> โครงการ</span>
+      <button class="btn sm" id="copyAsk">คัดลอกคำถามสำหรับ Google</button>
+    </div>
+  </div>
+
+  <div class="step">
+    <div class="h"><span class="no">2</span>วางตารางที่ Google ตอบ</div>
+    <p class="sub">ลากเลือกตารางในหน้า Google กด Ctrl+C แล้ววางที่นี่ รองรับทั้งแบบมีขีดคั่น | และแบบคัดลอกมาเป็นช่องๆ</p>
+    <textarea id="src" rows="6" placeholder="วางตารางตรงนี้"></textarea>
+    <div class="row" style="margin-top:12px">
+      <button class="btn" id="build">ทำตาราง</button>
+      <span style="font-size:12.5px;color:var(--mute)">วางยาวแค่ไหนก็ได้ ไม่จำกัดจำนวนแถว</span>
+    </div>
+    <div class="err" id="err" hidden></div>
+  </div>
+
+  <div class="step" id="out" hidden style="padding:0">
+    <div style="padding:18px 18px 0">
+      <div class="h"><span class="no">3</span>ตรวจแล้วคัดลอกกลับ Excel</div>
+      <p class="sub" id="summary"></p>
+      <div class="row" style="margin-bottom:12px" id="picks"></div>
+    </div>
+    <div class="scroll"><table id="tbl"></table></div>
+    <div class="row" style="padding:16px;border-top:1px solid var(--line)" id="copyBar"></div>
+    <div class="foot" id="hint"></div>
+  </div>
+</div>
+
+<script>
+const COLS = [
+  { k:"d", label:"Developer",          excel:"B" },
+  { k:"t", label:"ประเภทที่อยู่อาศัย",  excel:"C" },
+  { k:"u", label:"จำนวนที่อยู่อาศัย",   excel:"D" },
+  { k:"f", label:"จำนวนชั้น",           excel:"E" },
+  { k:"p", label:"ราคาที่อยู่อาศัย",     excel:"F" },
+  { k:"a", label:"ขนาดพื้นที่ใช้สอย",   excel:"G" },
+];
+const GENERIC = /^(local developer|ไม่ระบุ|ไม่ทราบ|ไม่พบ|n\/?a|unknown|ผู้พัฒนาท้องถิ่น|[-–—.]+)$/i;
+
+const codeOf = s => { const m = String(s||"").match(/\(\s*([A-Z0-9]{4,6})\s*\)/i); return m ? m[1].toUpperCase() : null; };
+const normName = s => String(s||"").replace(/\uFFFD/g,"")
+  .replace(/\s*\([A-Z0-9]{4,6}\)\s*$/i,"").replace(/^(หมู่บ้าน|หมูบ้าน)\s*/,"")
+  .replace(/[\s.,\-–—]/g,"").toLowerCase();
+
+const firstNum = s => { const m = String(s).replace(/,/g,"").match(/-?\d+(?:\.\d+)?/); return m ? parseFloat(m[0]) : null; };
+const dead = s => !s || /^(ไม่ระบุ|ไม่ทราบ|ไม่พบ|n\/?a|[-–—.]+|)$/i.test(String(s).trim());
+
+const cv = {
+  d: s => dead(s) || GENERIC.test(String(s).trim()) ? "" : String(s).trim(),
+  t: s => dead(s) ? "" : String(s).trim(),
+  u: s => { if (dead(s)) return ""; const n = firstNum(s); return n && n >= 1 && n < 100000 ? Math.round(n) : ""; },
+  f: s => { if (dead(s)) return ""; const n = firstNum(s); return n && n >= 1 && n <= 10 ? Math.floor(n) : ""; },
+  p: s => {
+    if (dead(s)) return "";
+    let n = firstNum(s); if (n === null) return "";
+    if (!/m\b|ล้าน|mb/i.test(String(s)) && n >= 1000) n = n / 1e6;
+    return n > 0 && n < 500 ? Math.round(n * 100) / 100 : "";
+  },
+  a: s => { if (dead(s)) return ""; const n = firstNum(s); return n && n >= 10 && n <= 3000 ? Math.round(n * 100) / 100 : ""; },
+};
+
+/* ---- แยกตารางที่วางมา เป็นแถวและช่อง ---- */
+function toCells(text) {
+  const lines = text.split("\n").map(l => l.replace(/\u00a0/g," ").trim())
+    .filter(l => l && !/^[\s|:+\-–—_]+$/.test(l));
+  if (!lines.length) return [];
+  const pipe = lines.filter(l => l.includes("|")).length;
+  const tab  = lines.filter(l => l.includes("\t")).length;
+
+  if (pipe >= lines.length * 0.5)
+    return lines.map(l => l.replace(/^\||\|$/g,"").split("|").map(c => c.trim()));
+  if (tab >= lines.length * 0.5)
+    return lines.map(l => l.split("\t").map(c => c.trim()));
+  return lines.map(l => [l]);   // ช่องละบรรทัด จัดกลุ่มทีหลัง
+}
+
+const HDR = [
+  ["p", /ราคา/], ["f", /ชั้น/], ["a", /พื้นที่|ใช้สอย|ตร\.?\s*ม/],
+  ["u", /ยูนิต|หลัง|แปลง|จำนวนที่อยู่/],
+  ["d", /developer|ผู้พัฒนา|เจ้าของโครงการ|ผู้ประกอบการ|บริษัท/i],
+  ["t", /ประเภท/], ["n", /ชื่อ|โครงการ/],
+];
+
+function findHeader(rows) {
+  for (let i = 0; i < Math.min(4, rows.length); i++) {
+    const r = rows[i];
+    if (r.length < 3) continue;
+    const map = {}; const taken = new Set();
+    for (const [key, re] of HDR) {
+      const j = r.findIndex((c, idx) => !taken.has(idx) && re.test(c));
+      if (j !== -1) { map[key] = j; taken.add(j); }
+    }
+    if (map.n !== undefined && Object.keys(map).length >= 4) return { i, map, width: r.length };
+  }
+  return null;
+}
+
+function parse(text) {
+  let rows = toCells(text);
+  if (!rows.length) return { items: [], note: "ไม่พบข้อมูลในสิ่งที่วางมา" };
+
+  const flat = rows.every(r => r.length === 1);
+  const hdr = findHeader(rows);
+
+  /* แบบช่องละบรรทัด: หาความกว้างจากหัวตาราง แล้วตัดเป็นแถว */
+  if (flat) {
+    const cells = rows.map(r => r[0]);
+    let start = 0, width = 7, map = { n:0, d:1, t:2, u:3, f:4, p:5, a:6 };
+    const hi = cells.findIndex(c => /ชื่อโครงการ|โครงการ/.test(c));
+    if (hi !== -1) {
+      const head = []; let j = hi;
+      while (j < cells.length && head.length < 9 &&
+             HDR.some(([, re]) => re.test(cells[j]))) { head.push(cells[j]); j++; }
+      if (head.length >= 4) {
+        width = head.length; start = j; map = {}; const taken = new Set();
+        for (const [key, re] of HDR) {
+          const idx = head.findIndex((c, x) => !taken.has(x) && re.test(c));
+          if (idx !== -1) { map[key] = idx; taken.add(idx); }
+        }
+      }
+    }
+    rows = [];
+    for (let i = start; i + width <= cells.length; i += width) rows.push(cells.slice(i, i + width));
+    return { items: rows.map(r => pick(r, map)), note: "" };
+  }
+
+  const map = hdr ? hdr.map : { n:0, d:1, t:2, u:3, f:4, p:5, a:6 };
+  const body = hdr ? rows.slice(hdr.i + 1) : rows;
+  return { items: body.filter(r => r.length >= 2).map(r => pick(r, map)), note: hdr ? "" : "ไม่เจอหัวตาราง เดาลำดับคอลัมน์ตามที่ขอ Google ไว้" };
+}
+
+function pick(cells, map) {
+  const g = k => (map[k] !== undefined ? cells[map[k]] ?? "" : "");
+  const raw = g("n");
+  return { n: String(raw).replace(/\*\*/g,"").trim(), code: codeOf(raw),
+           d: cv.d(g("d")), t: cv.t(g("t")), u: cv.u(g("u")),
+           f: cv.f(g("f")), p: cv.p(g("p")), a: cv.a(g("a")) };
+}
+
+/* ---- state ---- */
+let grid = null, pick_ = COLS.map(c => c.k);
+const $ = id => document.getElementById(id);
+const namesOf = () => $("names").value.split("\n")
+  .map(l => l.replace(/^\s*[-•*\d]+[.)]?\s*/,"").trim()).filter(Boolean);
+
+$("names").addEventListener("input", () => { $("ncount").textContent = namesOf().length; });
+
+$("copyAsk").onclick = () => {
+  const ns = namesOf();
+  if (!ns.length) return;
+  const t = `หาข้อมูลโครงการบ้านจัดสรรในไทยต่อไปนี้ ตอบเป็นตารางเดียว หนึ่งแถวต่อหนึ่งโครงการ เรียงตามลำดับที่ให้มา ห้ามสลับ ห้ามข้าม
+คอลัมน์: ชื่อโครงการ | Developer | ประเภทที่อยู่อาศัย | จำนวนที่อยู่อาศัย (ยูนิต) | จำนวนชั้น | ราคาที่อยู่อาศัย (บาท) | ขนาดพื้นที่ใช้สอย (ตร.ม.)
+
+เก็บรหัสในวงเล็บท้ายชื่อไว้ในตารางด้วย จำนวนชั้นและพื้นที่ใช้สอยเอาค่าเริ่มต้น ไม่พบข้อมูลให้เว้นว่าง ห้ามเดา
+
+${ns.map(n => "- " + n).join("\n")}`;
+  copy(t, $("copyAsk"), "คัดลอกคำถามสำหรับ Google");
+};
+
+function copy(text, btn, back) {
+  navigator.clipboard.writeText(text).then(() => {
+    const o = btn.textContent; btn.textContent = "คัดลอกแล้ว";
+    setTimeout(() => { btn.textContent = back || o; }, 2000);
+  });
+}
+
+$("build").onclick = () => {
+  const ns = namesOf(), err = $("err");
+  err.hidden = true;
+  if (!ns.length) { err.textContent = "ใส่รายชื่อโครงการจาก Excel ก่อน"; err.hidden = false; return; }
+  const src = $("src").value.trim();
+  if (!src) { err.textContent = "วางตารางที่ Google ตอบก่อน"; err.hidden = false; return; }
+
+  const { items, note } = parse(src);
+  if (!items.length) { err.textContent = "อ่านตารางไม่ออก ลองคัดลอกใหม่ให้ติดหัวตารางมาด้วย"; err.hidden = false; return; }
+
+  const used = new Set();
+  grid = ns.map(nm => {
+    const c = codeOf(nm); let hit = -1;
+    if (c) hit = items.findIndex((x,i) => !used.has(i) && (x.code || codeOf(x.n)) === c);
+    if (hit === -1) {
+      const n = normName(nm);
+      hit = items.findIndex((x,i) => !used.has(i) && normName(x.n) === n);
+      if (hit === -1 && n.length > 3)
+        hit = items.findIndex((x,i) => { if (used.has(i)) return false;
+          const y = normName(x.n); return y.length > 3 && (y.includes(n) || n.includes(y)); });
+    }
+    const vals = {};
+    if (hit !== -1) { used.add(hit); COLS.forEach(({k}) => vals[k] = items[hit][k] ?? ""); }
+    else COLS.forEach(({k}) => vals[k] = "");
+    return { name: nm, found: hit !== -1, vals };
+  });
+
+  const extra = items.length - used.size;
+  render(note, extra);
+};
+
+function render(note, extra) {
+  $("out").hidden = false;
+  const found = grid.filter(r => r.found).length;
+  $("summary").innerHTML =
+    `เจอ <b style="color:var(--ok)">${found}</b> จาก ${grid.length} · แถวพื้นเหลืองคือไม่พบ จะเป็นช่องว่าง ไม่ทับของเดิม · แก้ค่าในช่องได้เลย`
+    + (note ? `<br><span style="color:var(--err)">${note}</span>` : "")
+    + (extra > 0 ? `<br><span style="color:var(--err)">Google ให้มาเกินรายชื่อ ${extra} แถว ไม่ได้ใช้</span>` : "");
+
+  $("picks").innerHTML = COLS.map(c =>
+    `<button class="chip ${pick_.includes(c.k) ? "on" : ""}" data-k="${c.k}">${c.excel} · ${c.label}</button>`).join("");
+  $("picks").querySelectorAll(".chip").forEach(b => b.onclick = () => {
+    const k = b.dataset.k;
+    pick_ = pick_.includes(k) ? pick_.filter(x => x !== k) : [...pick_, k];
+    render(note, extra);
+  });
+
+  $("tbl").innerHTML =
+    `<thead><tr><th style="width:34px">#</th><th style="min-width:210px">ชื่อโครงการ (A)</th>`
+    + COLS.map(c => `<th>${c.excel} · ${c.label}</th>`).join("") + `</tr></thead><tbody>`
+    + grid.map((r,i) =>
+        `<tr class="${r.found ? "" : "miss"}"><td class="num" style="color:var(--mute);font-size:12px">${i+1}</td>`
+        + `<td style="font-size:12.5px">${esc(r.name)}</td>`
+        + COLS.map(c => `<td style="opacity:${pick_.includes(c.k) ? 1 : .3}">`
+            + `<input data-i="${i}" data-k="${c.k}" value="${esc(String(r.vals[c.k] ?? ""))}"></td>`).join("")
+        + `</tr>`).join("") + `</tbody>`;
+  $("tbl").querySelectorAll("input").forEach(inp => inp.oninput = e => {
+    grid[+e.target.dataset.i].vals[e.target.dataset.k] = e.target.value;
+  });
+
+  const picked = COLS.filter(c => pick_.includes(c.k));
+  const range = picked.length === COLS.length ? "B–G" : picked.map(c => c.excel).join(",");
+  $("copyBar").innerHTML =
+    `<button class="btn" id="copyAll" ${picked.length ? "" : "disabled"}>คัดลอก ${picked.length} คอลัมน์ (${range})</button>`
+    + COLS.map(c => `<button class="btn ghost sm" data-one="${c.k}">เฉพาะ ${c.excel}</button>`).join("");
+  const tsv = keys => grid.map(r => keys.map(k => r.vals[k] ?? "").join("\t")).join("\n");
+  const all = $("copyAll");
+  if (all) all.onclick = () => copy(tsv(picked.map(c => c.k)), all, `คัดลอก ${picked.length} คอลัมน์ (${range})`);
+  $("copyBar").querySelectorAll("[data-one]").forEach(b => {
+    const k = b.dataset.one, lbl = b.textContent;
+    b.onclick = () => copy(tsv([k]), b, lbl);
+  });
+
+  $("hint").textContent =
+    `กลับไปที่ Excel คลิกเซลล์แรกของชุดนี้ เช่น ${picked[0]?.excel || "B"}2 แล้ว Ctrl+V · `
+    + `ถ้าคอลัมน์นั้นมีข้อมูลเดิมปนอยู่ ให้คัดลอกทีละคอลัมน์แล้ววางเฉพาะช่วงที่ว่าง`;
+}
+
+const esc = s => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/"/g,"&quot;");
+</script>
+</body>
+</html>
